@@ -1,0 +1,17 @@
+services:
+  vocal-extractor:
+    build: .
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data/models:/data/models
+      - ./data/output:/data/output
+    read_only: true
+    tmpfs:
+      - /data/input:mode=1777,size=2g
+      - /tmp:mode=1777,size=2g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

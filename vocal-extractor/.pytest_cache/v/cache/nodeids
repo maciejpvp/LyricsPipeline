@@ -1,0 +1,8 @@
+[
+  "tests/test_app.py::test_failed_job_removes_partial_outputs_and_input",
+  "tests/test_app.py::test_job_accepts_relative_separator_outputs",
+  "tests/test_app.py::test_job_writes_outputs_and_removes_input",
+  "tests/test_app.py::test_rejects_missing_file",
+  "tests/test_app.py::test_rejects_oversized_upload",
+  "tests/test_app.py::test_rejects_unsupported_audio"
+]
