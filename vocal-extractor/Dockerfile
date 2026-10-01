@@ -12,22 +12,21 @@ FROM python:3.11-slim-bookworm@sha256:4b4c524dc3dce996864e030c7bd9c6b0e517597189
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
-    INPUT_DIR=/data/input \
-    OUTPUT_DIR=/data/output \
+    INPUT_DIR=/tmp/vocal-extractor/input \
+    OUTPUT_DIR=/tmp/vocal-extractor/output \
     MODEL_DIR=/data/models
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsamplerate0 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 appuser \
-    && mkdir -p /data/input /data/output /data/models /tmp/numba-cache \
+    && mkdir -p /data/models /tmp/vocal-extractor /tmp/numba-cache \
     && chown -R appuser:appuser /data /tmp/numba-cache
 WORKDIR /app
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
 RUN python -m pip install --no-index --find-links /wheels -r requirements.txt && rm -rf /wheels
-COPY --chown=appuser:appuser app.py .
+COPY --chown=appuser:appuser *.py .
+COPY --chown=appuser:appuser data/models /data/models
 
 USER appuser
-EXPOSE 8080
-VOLUME ["/data/input", "/data/output", "/data/models"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-server-header"]
+CMD ["python", "worker.py"]

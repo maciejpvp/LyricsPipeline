@@ -56,6 +56,19 @@ func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pul
 		return nil, err
 	}
 
+	if _, err = s3.NewBucketServerSideEncryptionConfiguration(ctx, fmt.Sprintf("%s-encryption", name), &s3.BucketServerSideEncryptionConfigurationArgs{
+		Bucket: bucket.ID(),
+		Rules: s3.BucketServerSideEncryptionConfigurationRuleArray{
+			s3.BucketServerSideEncryptionConfigurationRuleArgs{
+				ApplyServerSideEncryptionByDefault: s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs{
+					SseAlgorithm: pulumi.String("AES256"),
+				},
+			},
+		},
+	}, pulumi.Parent(component)); err != nil {
+		return nil, err
+	}
+
 	component.Bucket = bucket
 	component.BucketName = bucket.Bucket
 
