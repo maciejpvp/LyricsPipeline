@@ -7,12 +7,18 @@ import (
 )
 
 type Worker struct {
+	pulumi.ResourceState
 	Cluster *ecs.Cluster
 	Service *ecs.Service
 }
 
-func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image, tags pulumi.StringMap) (*Worker, error) {
-	cluster, err := ecs.NewCluster(ctx, name+"-cluster", &ecs.ClusterArgs{Tags: tags})
+func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image, tags pulumi.StringMap, opts ...pulumi.ResourceOption) (*Worker, error) {
+	component := &Worker{}
+	if err := ctx.RegisterComponentResource("lyrics:worker:Worker", name, component, opts...); err != nil {
+		return nil, err
+	}
+	parent := pulumi.Parent(component)
+	cluster, err := ecs.NewCluster(ctx, name+"-cluster", &ecs.ClusterArgs{Tags: tags}, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +32,7 @@ func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image,
 			CidrBlocks: pulumi.StringArray{pulumi.String("0.0.0.0/0")},
 		}},
 		Tags: tags,
-	})
+	}, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -41,11 +47,19 @@ func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image,
 			SecurityGroups: pulumi.StringArray{securityGroup.ID()},
 			Subnets:        pulumi.StringArray{network.PrivateSubnet.ID()},
 		},
-		ForceDelete: pulumi.Bool(true),
+		ForceDelete: pulumi.Bool(false),
 		Tags:        tags,
-	})
+	}, parent)
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{Cluster: cluster, Service: service}, nil
+	component.Cluster = cluster
+	component.Service = service
+	if err := ctx.RegisterResourceOutputs(component, pulumi.Map{
+		"clusterName": cluster.Name,
+		"serviceName": service.Name,
+	}); err != nil {
+		return nil, err
+	}
+	return component, nil
 }

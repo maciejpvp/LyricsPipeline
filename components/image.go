@@ -7,21 +7,48 @@ import (
 )
 
 type Image struct {
+	pulumi.ResourceState
 	LogGroup       *cloudwatch.LogGroup
 	TaskDefinition *ecs.TaskDefinition
 }
 
-func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region, cpu, memory string, storage *Storage, queue *Queue, roles *WorkerIAM, tags pulumi.StringMap) (*Image, error) {
+func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region, cpu, memory string, storage *Storage, queue *Queue, roles *WorkerIAM, tags pulumi.StringMap, opts ...pulumi.ResourceOption) (*Image, error) {
+	component := &Image{}
+	if err := ctx.RegisterComponentResource("lyrics:image:Image", name, component, opts...); err != nil {
+		return nil, err
+	}
+	parent := pulumi.Parent(component)
 	logs, err := cloudwatch.NewLogGroup(ctx, name+"-logs", &cloudwatch.LogGroupArgs{
 		NamePrefix:      pulumi.String("/ecs/" + name + "-"),
 		RetentionInDays: pulumi.Int(30),
 		Tags:            tags,
-	})
+	}, parent)
 	if err != nil {
 		return nil, err
 	}
 
-	container := pulumi.Sprintf(`[{"name":"worker","image":%q,"essential":true,"environment":[{"name":"AWS_REGION","value":%q},{"name":"MEDIA_BUCKET","value":%q},{"name":"QUEUE_URL","value":%q},{"name":"INPUT_PREFIX","value":"input"},{"name":"OUTPUT_PREFIX","value":"output"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":%q,"awslogs-region":%q,"awslogs-stream-prefix":"worker"}}}]`, image, region, storage.Bucket.Bucket, queue.Queue.Url, logs.Name, region)
+	container := pulumi.JSONMarshal(pulumi.All(image, storage.Bucket.Bucket, queue.Queue.Url, logs.Name).ApplyT(func(values []interface{}) []map[string]interface{} {
+		return []map[string]interface{}{{
+			"name":      "worker",
+			"image":     values[0].(string),
+			"essential": true,
+			"environment": []map[string]string{
+				{"name": "AWS_REGION", "value": region},
+				{"name": "MEDIA_BUCKET", "value": values[1].(string)},
+				{"name": "QUEUE_URL", "value": values[2].(string)},
+				{"name": "INPUT_PREFIX", "value": "input"},
+				{"name": "OUTPUT_PREFIX", "value": "output"},
+			},
+			"logConfiguration": map[string]interface{}{
+				"logDriver": "awslogs",
+				"options": map[string]string{
+					"awslogs-group":         values[3].(string),
+					"awslogs-region":        region,
+					"awslogs-stream-prefix": "worker",
+				},
+			},
+		}}
+	}))
 	task, err := ecs.NewTaskDefinition(ctx, name+"-task", &ecs.TaskDefinitionArgs{
 		Family:                  pulumi.String(name),
 		Cpu:                     pulumi.String(cpu),
@@ -32,9 +59,17 @@ func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region
 		TaskRoleArn:             roles.TaskRole.Arn,
 		ContainerDefinitions:    container,
 		Tags:                    tags,
-	})
+	}, parent)
 	if err != nil {
 		return nil, err
 	}
-	return &Image{LogGroup: logs, TaskDefinition: task}, nil
+	component.LogGroup = logs
+	component.TaskDefinition = task
+	if err := ctx.RegisterResourceOutputs(component, pulumi.Map{
+		"logGroupName":      logs.Name,
+		"taskDefinitionArn": task.Arn,
+	}); err != nil {
+		return nil, err
+	}
+	return component, nil
 }

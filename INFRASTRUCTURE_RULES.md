@@ -28,6 +28,45 @@ The reusable object storage implementation is in `components/storage.go`. Keep
 application-specific use cases, such as MP3 files, in the stack entrypoint or a
 higher-level domain component rather than in the generic storage component.
 
+### Component implementation requirements
+
+Every reusable infrastructure group must follow the same shape:
+
+- embed `pulumi.ResourceState` in the component output type;
+- accept typed arguments and variadic `pulumi.ResourceOption` values;
+- register the component before creating children;
+- pass `pulumi.Parent(component)` to every child resource;
+- register meaningful component outputs with `ctx.RegisterResourceOutputs`.
+
+Keep logical resource names stable during refactors so Pulumi does not replace
+resources merely because their Go implementation was reorganized.
+
+## Serialize provider JSON structurally
+
+Do not construct provider JSON with raw string literals, `fmt.Sprintf`, or
+`pulumi.Sprintf`. Build the document from typed Go maps or structs and serialize
+it with `pulumi.JSONMarshal`:
+
+```go
+policy := pulumi.JSONMarshal(pulumi.All(resource.Arn).ApplyT(func(values []interface{}) map[string]interface{} {
+    return map[string]interface{}{
+        "Version": "2012-10-17",
+        "Resource": values[0].(string),
+    }
+}))
+```
+
+Dynamic resource outputs must be lifted to the top level with `pulumi.All` or
+`ApplyT` before marshaling. `pulumi.JSONMarshal` does not support unresolved
+outputs nested inside an ordinary map. Prefer provider-native typed data-source
+builders, such as IAM policy documents, when they express the provider field
+directly.
+
+This rule applies to all Pulumi JSON fields, including IAM policies, SQS
+redrive and queue policies, and ECS container definitions. JSON used by the
+worker’s runtime protocol or by deployment configuration parsing is separate
+application data and is not affected by this infrastructure rule.
+
 ## Decouple layers with stack references
 
 When one layer needs an output from another layer, use `pulumi.StackReference`. Do not hardcode resource IDs, ARNs, or names from another stack.

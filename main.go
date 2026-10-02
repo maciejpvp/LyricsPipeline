@@ -15,7 +15,15 @@ func main() {
 		name := config.Name
 		tags := config.pulumiTags()
 
-		network, err := components.NewNetwork(ctx, name, config.AvailabilityZone, tags)
+		network, err := components.NewNetwork(ctx, components.NetworkConfig{
+			Name:              name,
+			AvailabilityZone:  config.AvailabilityZone,
+			Tags:              tags,
+			VPCCIDR:           "10.42.0.0/16",
+			PublicSubnetCIDR:  "10.42.1.0/24",
+			PrivateSubnetCIDR: "10.42.2.0/24",
+			InternetCIDR:      "0.0.0.0/0",
+		})
 		if err != nil {
 			return err
 		}
@@ -47,7 +55,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if err = components.NewAutoscaling(ctx, name, config.MaxTasks, worker, queue.Queue.Name); err != nil {
+		if _, err = components.NewAutoscaling(ctx, name, config.MaxTasks, worker, queue.Queue.Name); err != nil {
 			return err
 		}
 
