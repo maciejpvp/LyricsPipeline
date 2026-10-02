@@ -22,7 +22,23 @@ The compose file expects an AWS-compatible SQS endpoint or a real queue; it does
 
 ## Deployment
 
-The Pulumi stack creates the media bucket, SQS queue/DLQ, S3 notification, IAM roles, ECR repository, VPC/NAT networking, ECS Fargate service, logs, and queue-depth scaling. Build and push the worker image, then set `VOCAL_EXTRACTOR_IMAGE` before `pulumi up`.
+The Pulumi stack creates the media bucket, SQS queue/DLQ, S3 notification, IAM roles, ECR repository, VPC/NAT networking, ECS Fargate service, logs, and queue-depth scaling.
+
+Infrastructure settings are stored as one typed JSON object in Pulumi configuration rather than as individual environment variables:
+
+```bash
+pulumi config set deployment "$(tr -d '\n' < deployment.example.json)"
+pulumi up
+```
+
+The first `pulumi up` can omit `image`; because the service starts with zero tasks, Pulumi uses an ECR `:bootstrap` reference only to create the task definition. From the repository root, build and publish the worker separately from the infrastructure:
+
+```bash
+./scripts/publish-vocal-extractor-image.sh
+pulumi up
+```
+
+The script builds only `./vocal-extractor`, pushes a Git-based tag to the ECR repository created by Pulumi, resolves the immutable image digest, and stores it in the Pulumi `deploymentImage` setting. It does not modify or rebuild the rest of the application. AWS credentials and the AWS provider's region can still be supplied through the normal AWS profile/environment configuration.
 
 ## Tests
 

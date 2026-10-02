@@ -1,0 +1,14 @@
+{
+  "name": "vocal-extractor",
+  "region": "eu-central-1",
+  "availabilityZone": "eu-central-1a",
+  "image": "",
+  "taskCpu": "2048",
+  "taskMemory": "8192",
+  "maxTasks": 10,
+  "visibilitySeconds": 1800,
+  "maxReceiveCount": 5,
+  "tags": {
+    "Purpose": "vocal-extractor"
+  }
+}

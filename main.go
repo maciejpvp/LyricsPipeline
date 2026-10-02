@@ -2,31 +2,20 @@ package main
 
 import (
 	"LyricsPipeline/components"
-	"os"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		get := func(name, fallback string) string {
-			if value := os.Getenv(name); value != "" {
-				return value
-			}
-			return fallback
+		config, err := loadInfrastructureConfig(ctx)
+		if err != nil {
+			return err
 		}
-		image := get("VOCAL_EXTRACTOR_IMAGE", "public.ecr.aws/docker/library/python:3.11-slim")
-		if image == "" {
-			image = "public.ecr.aws/docker/library/python:3.11-slim"
-		}
-		region := get("AWS_REGION", "eu-central-1")
-		az := get("AWS_AVAILABILITY_ZONE", region+"a")
-		taskCPU, taskMemory := get("TASK_CPU", "2048"), get("TASK_MEMORY", "8192")
-		maxTasks, visibility, maxReceive := 10, 1800, 5
-		name := "vocal-extractor"
-		tags := pulumi.StringMap{"Purpose": pulumi.String(name)}
+		name := config.Name
+		tags := config.pulumiTags()
 
-		network, err := components.NewNetwork(ctx, name, az, tags)
+		network, err := components.NewNetwork(ctx, name, config.AvailabilityZone, tags)
 		if err != nil {
 			return err
 		}
@@ -34,7 +23,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		queue, err := components.NewQueue(ctx, name, storage, maxReceive, visibility, tags)
+		queue, err := components.NewQueue(ctx, name, storage, config.MaxReceiveCount, config.Visibility, tags)
 		if err != nil {
 			return err
 		}
@@ -46,7 +35,11 @@ func main() {
 		if err != nil {
 			return err
 		}
-		imageDefinition, err := components.NewImage(ctx, name, image, region, taskCPU, taskMemory, storage, queue, roles, tags)
+		image := pulumi.StringInput(pulumi.String(config.Image))
+		if config.Image == "" {
+			image = pulumi.Sprintf("%s:bootstrap", registry.Repository.RepositoryUrl)
+		}
+		imageDefinition, err := components.NewImage(ctx, name, image, config.Region, config.TaskCPU, config.TaskMemory, storage, queue, roles, tags)
 		if err != nil {
 			return err
 		}
@@ -54,7 +47,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if err = components.NewAutoscaling(ctx, name, maxTasks, worker, queue.Queue.Name); err != nil {
+		if err = components.NewAutoscaling(ctx, name, config.MaxTasks, worker, queue.Queue.Name); err != nil {
 			return err
 		}
 

@@ -11,7 +11,7 @@ type Image struct {
 	TaskDefinition *ecs.TaskDefinition
 }
 
-func NewImage(ctx *pulumi.Context, name, image, region, cpu, memory string, storage *Storage, queue *Queue, roles *WorkerIAM, tags pulumi.StringMap) (*Image, error) {
+func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region, cpu, memory string, storage *Storage, queue *Queue, roles *WorkerIAM, tags pulumi.StringMap) (*Image, error) {
 	logs, err := cloudwatch.NewLogGroup(ctx, name+"-logs", &cloudwatch.LogGroupArgs{
 		NamePrefix:      pulumi.String("/ecs/" + name + "-"),
 		RetentionInDays: pulumi.Int(30),
