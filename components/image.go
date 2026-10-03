@@ -29,9 +29,10 @@ func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region
 
 	container := pulumi.JSONMarshal(pulumi.All(image, storage.Bucket.Bucket, queue.Queue.Url, logs.Name).ApplyT(func(values []interface{}) []map[string]interface{} {
 		return []map[string]interface{}{{
-			"name":      "worker",
-			"image":     values[0].(string),
-			"essential": true,
+			"name":        "worker",
+			"image":       values[0].(string),
+			"essential":   true,
+			"stopTimeout": 120,
 			"healthCheck": map[string]interface{}{
 				"command":     []string{"CMD-SHELL", "python healthcheck.py"},
 				"interval":    60,

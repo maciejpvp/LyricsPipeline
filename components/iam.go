@@ -79,8 +79,9 @@ func NewWorkerIAM(ctx *pulumi.Context, name string, storage *Storage, queue *Que
 		return map[string]interface{}{
 			"Version": "2012-10-17",
 			"Statement": []map[string]interface{}{
+				{"Effect": "Allow", "Action": []string{"s3:ListBucket"}, "Resource": bucketARN},
 				{"Effect": "Allow", "Action": []string{"s3:GetObject"}, "Resource": bucketARN + "/input/*"},
-				{"Effect": "Allow", "Action": []string{"s3:PutObject"}, "Resource": bucketARN + "/output/*"},
+				{"Effect": "Allow", "Action": []string{"s3:GetObject", "s3:PutObject"}, "Resource": bucketARN + "/output/*"},
 				{"Effect": "Allow", "Action": []string{
 					"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes",
 				}, "Resource": queueARN},
