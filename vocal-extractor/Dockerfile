@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsampl
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 appuser \
     && mkdir -p /data/models /tmp/vocal-extractor /tmp/numba-cache \
-    && chown -R appuser:appuser /data /tmp/numba-cache
+    && chown -R appuser:appuser /data /tmp/vocal-extractor /tmp/numba-cache
 WORKDIR /app
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .

@@ -6,7 +6,7 @@ CPU-only S3/SQS worker that separates vocals from audio with UVR-MDX-NET through
 
 Upload source audio to `s3://$MEDIA_BUCKET/input/{job_id}/{filename}`. S3 sends the object-created notification to SQS, and Fargate workers process one message at a time. Completed WAV stems and `manifest.json` are written to `output/{job_id}/`. Source objects are retained.
 
-The worker acknowledges a message only after the manifest is uploaded. Failed messages remain available for retry and eventually move to the configured dead-letter queue. A completed manifest makes redelivery safe.
+The worker acknowledges a message only after the successful manifest is uploaded. Failed messages are received once and then move directly to the dead-letter queue. A success manifest makes redelivery safe.
 
 Supported formats are MP3, WAV, FLAC, M4A, OGG, AAC, and WMA.
 

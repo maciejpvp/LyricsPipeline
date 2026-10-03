@@ -94,7 +94,7 @@ def test_worker_processes_and_acknowledges_after_manifest(tmp_path):
     assert [item[1] for item in store.uploads] == [
         "output/job-1/song_(Vocals).wav", "output/job-1/song_(Instrumental).wav"
     ]
-    assert store.manifests[0][2]["status"] == "completed"
+    assert store.manifests[0][2]["status"] == "success"
 
 
 def test_worker_does_not_ack_failed_job(tmp_path):

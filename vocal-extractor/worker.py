@@ -41,6 +41,34 @@ class VisibilityExtender:
                 logger.exception("failed to extend SQS visibility timeout")
 
 
+class HealthReporter:
+    """Publishes a heartbeat consumed by the ECS container health check."""
+
+    def __init__(self, path: Path, interval: int = 30):
+        self.path, self.interval = path, interval
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="health-heartbeat", daemon=True)
+
+    def __enter__(self):
+        self._touch()
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop_event.set()
+        self.thread.join(timeout=self.interval + 1)
+
+    def _touch(self) -> None:
+        self.path.touch(exist_ok=True)
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            try:
+                self._touch()
+            except Exception:
+                logger.exception("failed to write worker health heartbeat")
+
+
 class Worker:
     def __init__(self, settings: Settings, queue: MessageQueue, store: ObjectStore, processor: AudioProcessor):
         self.settings, self.queue, self.store, self.processor = settings, queue, store, processor
@@ -54,11 +82,12 @@ class Worker:
         self.settings.input_dir.mkdir(parents=True, exist_ok=True)
         self.settings.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(json.dumps({"event": "worker_started"}))
-        while not self.stop_event.is_set():
-            for message in self.queue.receive(self.settings.sqs_wait_seconds, self.settings.visibility_timeout_seconds):
-                if self.stop_event.is_set():
-                    return
-                self._handle_message(message)
+        with HealthReporter(self.settings.input_dir.parent / "health"):
+            while not self.stop_event.is_set():
+                for message in self.queue.receive(self.settings.sqs_wait_seconds, self.settings.visibility_timeout_seconds):
+                    if self.stop_event.is_set():
+                        return
+                    self._handle_message(message)
         logger.info(json.dumps({"event": "worker_stopped"}))
 
     def _handle_message(self, message: QueueMessage) -> None:
@@ -99,9 +128,9 @@ class Worker:
                 output_keys.append(key)
             self.store.upload_json(job.bucket, manifest_key, {
                 "job_id": job.job_id, "source_key": job.key, "output_keys": output_keys,
-                "status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(),
+                "status": "success", "completed_at": datetime.now(timezone.utc).isoformat(),
             })
-            logger.info(json.dumps({"event": "job_completed", "job_id": job.job_id, "outputs": output_keys}))
+            logger.info(json.dumps({"event": "job_succeeded", "job_id": job.job_id, "outputs": output_keys}))
         finally:
             input_path.unlink(missing_ok=True)
             if output_dir.exists():

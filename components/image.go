@@ -32,6 +32,13 @@ func NewImage(ctx *pulumi.Context, name string, image pulumi.StringInput, region
 			"name":      "worker",
 			"image":     values[0].(string),
 			"essential": true,
+			"healthCheck": map[string]interface{}{
+				"command":     []string{"CMD-SHELL", "python healthcheck.py"},
+				"interval":    60,
+				"timeout":     5,
+				"retries":     3,
+				"startPeriod": 120,
+			},
 			"environment": []map[string]string{
 				{"name": "AWS_REGION", "value": region},
 				{"name": "MEDIA_BUCKET", "value": values[1].(string)},

@@ -7,7 +7,7 @@
   "taskMemory": "8192",
   "maxTasks": 10,
   "visibilitySeconds": 1800,
-  "maxReceiveCount": 5,
+  "maxReceiveCount": 1,
   "tags": {
     "Purpose": "vocal-extractor"
   }

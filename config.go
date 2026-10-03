@@ -30,7 +30,7 @@ func defaultInfrastructureConfig() InfrastructureConfig {
 		TaskMemory:       "8192",
 		MaxTasks:         10,
 		Visibility:       1800,
-		MaxReceiveCount:  5,
+		MaxReceiveCount:  1,
 		Tags:             map[string]string{"Purpose": "vocal-extractor"},
 	}
 }
@@ -48,7 +48,7 @@ func loadInfrastructureConfig(ctx *pulumi.Context) (InfrastructureConfig, error)
 	if config.Name == "" || config.Region == "" || config.AvailabilityZone == "" {
 		return InfrastructureConfig{}, fmt.Errorf("deployment configuration requires name, region, and availabilityZone")
 	}
-	if config.TaskCPU == "" || config.TaskMemory == "" || config.MaxTasks < 1 || config.Visibility < 1 || config.MaxReceiveCount < 1 {
+	if config.TaskCPU == "" || config.TaskMemory == "" || config.MaxTasks < 1 || config.Visibility < 1 || config.MaxReceiveCount != 1 {
 		return InfrastructureConfig{}, fmt.Errorf("deployment configuration contains invalid compute or queue limits")
 	}
 	return config, nil
