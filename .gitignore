@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment and generated media
+.env
+.env.*
+!.env.example
+vocal-extractor/data/input/
+vocal-extractor/data/output/
+
+# Pulumi local state and workspaces
+.pulumi/
+.pulumi-workspaces/
+
+# Go build and test artifacts
+bin/
+*.test
+*.out
+coverage.out
+
+# Local tooling and OS files
+.idea/
+.vscode/
+.DS_Store

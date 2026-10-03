@@ -1,0 +1,21 @@
+services:
+  vocal-extractor:
+    build: .
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    env_file:
+      - .env
+    environment:
+      AWS_REGION: "${AWS_REGION:-eu-central-1}"
+      MEDIA_BUCKET: "${MEDIA_BUCKET:-local-media}"
+      QUEUE_URL: "${QUEUE_URL:-http://localstack:4566/000000000000/vocal-extractor}"
+    volumes:
+      - ./data/models:/data/models
+      - ./data/output:/tmp/vocal-extractor/output
+    read_only: true
+    tmpfs:
+      - /tmp/vocal-extractor/input:mode=1777,size=2g
+      - /tmp:mode=1777,size=2g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

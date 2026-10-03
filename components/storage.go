@@ -30,7 +30,7 @@ func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pul
 
 	bucket, err := s3.NewBucket(ctx, fmt.Sprintf("%s-bucket", name), &s3.BucketArgs{
 		BucketPrefix: pulumi.String(fmt.Sprintf("%s-", name)),
-		ForceDestroy: pulumi.Bool(false),
+		ForceDestroy: pulumi.Bool(true),
 		Tags:         args.Tags,
 	}, pulumi.Parent(component))
 	if err != nil {
@@ -51,6 +51,19 @@ func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pul
 		Bucket: bucket.ID(),
 		Rule: s3.BucketOwnershipControlsRuleArgs{
 			ObjectOwnership: pulumi.String("BucketOwnerEnforced"),
+		},
+	}, pulumi.Parent(component)); err != nil {
+		return nil, err
+	}
+
+	if _, err = s3.NewBucketServerSideEncryptionConfiguration(ctx, fmt.Sprintf("%s-encryption", name), &s3.BucketServerSideEncryptionConfigurationArgs{
+		Bucket: bucket.ID(),
+		Rules: s3.BucketServerSideEncryptionConfigurationRuleArray{
+			s3.BucketServerSideEncryptionConfigurationRuleArgs{
+				ApplyServerSideEncryptionByDefault: s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs{
+					SseAlgorithm: pulumi.String("AES256"),
+				},
+			},
 		},
 	}, pulumi.Parent(component)); err != nil {
 		return nil, err
