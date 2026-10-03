@@ -88,7 +88,7 @@ Never hardcode secrets. Use `config.RequireSecret` or encrypted Pulumi configura
 ## Resource naming and safety
 
 - Prefer Pulumi-generated names or prefixes. Avoid hardcoding globally unique cloud resource names.
-- Keep destructive options such as `ForceDestroy` disabled unless the requirement is explicit and documented.
+- Keep destructive options such as `ForceDestroy` disabled unless the requirement is explicit and documented. This stack explicitly enables force cleanup for its S3 bucket, ECR repository, and ECS service so teardown can remove stored objects, images, and service tasks.
 - Default storage resources to private access.
 - Add public-access blocking and ownership controls to S3 buckets unless a documented exception exists.
 - Tag resources with their purpose and ownership where the provider supports tags.

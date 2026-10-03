@@ -30,7 +30,7 @@ func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pul
 
 	bucket, err := s3.NewBucket(ctx, fmt.Sprintf("%s-bucket", name), &s3.BucketArgs{
 		BucketPrefix: pulumi.String(fmt.Sprintf("%s-", name)),
-		ForceDestroy: pulumi.Bool(false),
+		ForceDestroy: pulumi.Bool(true),
 		Tags:         args.Tags,
 	}, pulumi.Parent(component))
 	if err != nil {

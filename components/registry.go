@@ -16,7 +16,7 @@ func NewRegistry(ctx *pulumi.Context, name string, tags pulumi.StringMap, opts .
 		return nil, err
 	}
 	repository, err := ecr.NewRepository(ctx, name+"-image", &ecr.RepositoryArgs{
-		ForceDelete: pulumi.Bool(false),
+		ForceDelete: pulumi.Bool(true),
 		ImageScanningConfiguration: ecr.RepositoryImageScanningConfigurationArgs{
 			ScanOnPush: pulumi.Bool(true),
 		},

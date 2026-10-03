@@ -47,7 +47,7 @@ func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image,
 			SecurityGroups: pulumi.StringArray{securityGroup.ID()},
 			Subnets:        pulumi.StringArray{network.PrivateSubnet.ID()},
 		},
-		ForceDelete: pulumi.Bool(false),
+		ForceDelete: pulumi.Bool(true),
 		Tags:        tags,
 	}, parent)
 	if err != nil {
