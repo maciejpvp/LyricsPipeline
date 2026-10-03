@@ -12,7 +12,7 @@ type Worker struct {
 	Service *ecs.Service
 }
 
-func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image, tags pulumi.StringMap, opts ...pulumi.ResourceOption) (*Worker, error) {
+func NewWorker(ctx *pulumi.Context, name string, minTasks int, network *Network, image *Image, tags pulumi.StringMap, opts ...pulumi.ResourceOption) (*Worker, error) {
 	component := &Worker{}
 	if err := ctx.RegisterComponentResource("lyrics:worker:Worker", name, component, opts...); err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func NewWorker(ctx *pulumi.Context, name string, network *Network, image *Image,
 	service, err := ecs.NewService(ctx, name+"-service", &ecs.ServiceArgs{
 		Cluster:        cluster.Arn,
 		TaskDefinition: image.TaskDefinition.Arn,
-		DesiredCount:   pulumi.Int(0),
+		DesiredCount:   pulumi.Int(minTasks),
 		LaunchType:     pulumi.String("FARGATE"),
 		NetworkConfiguration: ecs.ServiceNetworkConfigurationArgs{
 			AssignPublicIp: pulumi.Bool(false),

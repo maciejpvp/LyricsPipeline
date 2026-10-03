@@ -51,11 +51,11 @@ func main() {
 		if err != nil {
 			return err
 		}
-		worker, err := components.NewWorker(ctx, name, network, imageDefinition, tags)
+		worker, err := components.NewWorker(ctx, name, config.MinTasks, network, imageDefinition, tags)
 		if err != nil {
 			return err
 		}
-		if _, err = components.NewAutoscaling(ctx, name, config.MaxTasks, worker, queue.Queue.Name); err != nil {
+		if _, err = components.NewAutoscaling(ctx, name, config.MinTasks, config.MaxTasks, worker, queue.Queue.Name); err != nil {
 			return err
 		}
 

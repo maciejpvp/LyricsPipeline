@@ -15,7 +15,7 @@ type Autoscaling struct {
 	ScaleIn  *appautoscaling.Policy
 }
 
-func NewAutoscaling(ctx *pulumi.Context, name string, maxTasks int, worker *Worker, queueName pulumi.StringInput, opts ...pulumi.ResourceOption) (*Autoscaling, error) {
+func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int, worker *Worker, queueName pulumi.StringInput, opts ...pulumi.ResourceOption) (*Autoscaling, error) {
 	component := &Autoscaling{}
 	if err := ctx.RegisterComponentResource("lyrics:autoscaling:Autoscaling", name, component, opts...); err != nil {
 		return nil, err
@@ -26,7 +26,7 @@ func NewAutoscaling(ctx *pulumi.Context, name string, maxTasks int, worker *Work
 		ServiceNamespace:  pulumi.String("ecs"),
 		ScalableDimension: pulumi.String("ecs:service:DesiredCount"),
 		ResourceId:        resourceID,
-		MinCapacity:       pulumi.Int(0),
+		MinCapacity:       pulumi.Int(minTasks),
 		MaxCapacity:       pulumi.Int(maxTasks),
 	}
 
@@ -65,7 +65,7 @@ func NewAutoscaling(ctx *pulumi.Context, name string, maxTasks int, worker *Work
 			120,
 			appautoscaling.PolicyStepScalingPolicyConfigurationStepAdjustmentArgs{
 				MetricIntervalUpperBound: pulumi.String("0"),
-				ScalingAdjustment:        pulumi.Int(0),
+				ScalingAdjustment:        pulumi.Int(1),
 			},
 		),
 		parent,
@@ -98,16 +98,43 @@ func NewAutoscaling(ctx *pulumi.Context, name string, maxTasks int, worker *Work
 		}
 	}
 	emptyAlarmArgs := &cloudwatch.MetricAlarmArgs{
-		Namespace:          pulumi.String("AWS/SQS"),
-		MetricName:         pulumi.String("ApproximateNumberOfMessagesVisible"),
-		Dimensions:         pulumi.StringMap{"QueueName": queueName},
-		Statistic:          pulumi.String("Maximum"),
-		Period:             pulumi.Int(60),
-		EvaluationPeriods:  pulumi.Int(2),
+		MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
+			cloudwatch.MetricAlarmMetricQueryArgs{
+				Id: pulumi.String("visible"),
+				Metric: cloudwatch.MetricAlarmMetricQueryMetricArgs{
+					Namespace:  pulumi.String("AWS/SQS"),
+					MetricName: pulumi.String("ApproximateNumberOfMessagesVisible"),
+					Dimensions: pulumi.StringMap{"QueueName": queueName},
+					Stat:       pulumi.String("Maximum"),
+					Period:     pulumi.Int(60),
+				},
+				ReturnData: pulumi.Bool(false),
+			},
+			cloudwatch.MetricAlarmMetricQueryArgs{
+				Id: pulumi.String("in_flight"),
+				Metric: cloudwatch.MetricAlarmMetricQueryMetricArgs{
+					Namespace:  pulumi.String("AWS/SQS"),
+					MetricName: pulumi.String("ApproximateNumberOfMessagesNotVisible"),
+					Dimensions: pulumi.StringMap{"QueueName": queueName},
+					Stat:       pulumi.String("Maximum"),
+					Period:     pulumi.Int(60),
+				},
+				ReturnData: pulumi.Bool(false),
+			},
+			cloudwatch.MetricAlarmMetricQueryArgs{
+				Id:         pulumi.String("total"),
+				Expression: pulumi.String("visible + in_flight"),
+				Label:      pulumi.String("Visible and in-flight messages"),
+				ReturnData: pulumi.Bool(true),
+			},
+		},
+		// Require 15 consecutive idle minutes to tolerate delayed/approximate SQS metrics.
+		EvaluationPeriods:  pulumi.Int(15),
 		ComparisonOperator: pulumi.String("LessThanOrEqualToThreshold"),
 		Threshold:          pulumi.Float64(0),
 		AlarmActions:       pulumi.Array{scaleIn.Arn},
 		TreatMissingData:   pulumi.String("notBreaching"),
+		AlarmDescription:   pulumi.StringPtr("Scale in only when no SQS messages are visible or in flight"),
 	}
 
 	if _, err = cloudwatch.NewMetricAlarm(ctx, name+"-messages-empty", emptyAlarmArgs, parent); err != nil {
