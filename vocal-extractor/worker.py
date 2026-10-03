@@ -92,9 +92,22 @@ class Worker:
 
     def _handle_message(self, message: QueueMessage) -> None:
         try:
-            jobs = [job for job in parse_s3_jobs(message.body, self.settings.input_prefix)
-                    if job.bucket == self.settings.media_bucket]
+            try:
+                jobs = [job for job in parse_s3_jobs(message.body, self.settings.input_prefix)
+                        if job.bucket == self.settings.media_bucket]
+            except (json.JSONDecodeError, ValueError) as error:
+                logger.warning(json.dumps({
+                    "event": "message_ignored",
+                    "message_id": message.message_id,
+                    "reason": str(error),
+                }))
+                return
             if not jobs:
+                logger.info(json.dumps({
+                    "event": "message_ignored",
+                    "message_id": message.message_id,
+                    "reason": "no_matching_s3_jobs",
+                }))
                 self.queue.delete(message.receipt_handle)
                 return
             with VisibilityExtender(self.queue, message.receipt_handle,

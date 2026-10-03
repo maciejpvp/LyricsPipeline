@@ -41,7 +41,7 @@ class Settings:
             model_filename=os.getenv("MODEL_FILENAME", "UVR-MDX-NET-Voc_FT.onnx"),
             ffprobe_timeout_seconds=int(os.getenv("FFPROBE_TIMEOUT_SECONDS", "30")),
             sqs_wait_seconds=int(os.getenv("SQS_WAIT_SECONDS", "20")),
-            visibility_timeout_seconds=int(os.getenv("VISIBILITY_TIMEOUT_SECONDS", "1800")),
+            visibility_timeout_seconds=int(os.getenv("VISIBILITY_TIMEOUT_SECONDS", "900")),
             visibility_extension_seconds=int(os.getenv("VISIBILITY_EXTENSION_SECONDS", "600")),
             visibility_heartbeat_seconds=int(os.getenv("VISIBILITY_HEARTBEAT_SECONDS", "120")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
