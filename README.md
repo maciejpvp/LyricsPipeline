@@ -2,6 +2,63 @@
 
 Pulumi infrastructure and a CPU-only S3/SQS vocal extraction worker. See [the worker README](vocal-extractor/README.md) for job inputs, output manifests, container startup, and image publishing.
 
+## Go infrastructure layout
+
+The project keeps one stack per environment. `main.go` delegates to
+[`deployment.Run`](internal/deployment/deployment.go), which loads and validates
+configuration, checks the effective AWS provider region and availability zone,
+and connects components through typed outputs and explicit readiness dependencies.
+
+```mermaid
+flowchart TD
+    Main[main] --> Deployment[deployment.Run]
+    Deployment --> Config[config: parse, defaults, validation]
+    Config --> Location[Check provider region and availability zone]
+    Location --> Network[vpc: VPC and routing]
+    Location --> Storage[s3: media bucket]
+    Location --> Queue[sqs: jobs and DLQ]
+    Location --> Registry[ecr: image repository]
+    Storage --> Ingestion[ingestion: S3 to SQS]
+    Queue --> Ingestion
+    Storage --> Identity[iam: worker permissions]
+    Queue --> Identity
+    Registry --> Task[ecs: task, container and logs]
+    Identity --> Task
+    Network --> Worker[ecs: cluster and service]
+    Identity --> Worker
+    Task --> Worker
+    Worker --> Scaling[autoscaling: policies and alarms]
+    Queue --> Scaling
+```
+
+The public `deployment` JSON stays flat and `deploymentImage` retains precedence.
+Internally, settings use nested structs, separate CPU/MiB types, durations and parsed
+CIDRs. All defaults, including object prefixes, are in
+[`config.Defaults()`](internal/config/defaults.go). Prefixes flow to IAM scopes,
+S3 notification filters and the worker environment from the same object layout.
+JSON documents use concrete structs or the typed IAM policy builder; asynchronous
+inputs are combined through typed `pulumix` callbacks.
+
+Resource packages use AWS service names: `s3`, `sqs`, `ecr`, `iam`, `vpc`, `ecs`
+and `autoscaling`. `config`, `deployment` and `ingestion` describe configuration
+or cross-service orchestration. The `ecs` package keeps
+[`NewTaskDefinition`](internal/ecs/task_definition.go) and
+[`NewService`](internal/ecs/service.go) in separate files with distinct argument
+structs. SDK imports use explicit aliases such as `awsecs` when names overlap.
+
+The Go name `ecs.TaskDefinition` replaces `Image`, while the historical Pulumi
+token stays `lyrics:image:Image`; `ecs.Service` retains `lyrics:worker:Worker`.
+S3/SQS wiring retains its queue parent. The resource-graph regression test preserves all 44 pre-refactor component/resource
+identities, inputs and original dependencies. Additional tests check IAM scopes,
+container JSON, image precedence, shared prefixes and creation readiness.
+See [Infrastructure Rules](INFRASTRUCTURE_RULES.md) for conventions and ownership.
+
+Existing valid configuration needs no format migration. Unknown fields, malformed
+JSON, invalid Fargate sizes, out-of-range limits and location mismatches now fail
+before resource registration. Align `deployment.region` with the effective AWS
+provider region and choose an availability zone in that region. Keep the existing
+AWS provider/profile configuration; no new provider identity is introduced.
+
 ## Scale to zero with Fargate Spot
 
 ```mermaid
@@ -66,7 +123,7 @@ For a new stack, initialize `deployment` from [deployment.example.json](deployme
 From the repository root:
 
 ```bash
-gofmt -w config.go main.go components/*.go *_test.go
+gofmt -w main.go internal *_test.go
 go test ./...
 go vet ./...
 python -m pytest -q vocal-extractor/tests
@@ -86,3 +143,23 @@ After a separately authorized deployment, verify in the target AWS environment:
 Validation (2026-10-30): Go formatting, `go test ./...`, `go vet ./...`, and all 15 Python tests passed. The exact emitted scale-out expression was also evaluated through AWS CloudWatch `GetMetricData`, using constant input series and absent metrics: all nine scenarios passed (bootstrap, both sides of the one/two-worker boundaries, pending, missing pending/all metrics, and in-flight work before ECS metrics). This was read-only and published no metrics.
 
 [`pulumi preview --stack dev --non-interactive --diff`](https://app.pulumi.com/maciejpvp/LyricsPipeline/dev/previews/99e80867-f447-4e62-9616-cbd1e04c47c7) passed: three in-place updates (Container Insights, scale-out cooldown, and visible-message alarm), 42 resources unchanged, no creates/deletes/replacements. No `pulumi up` was run. Real upload, alarm/cooldown timing and post-deployment checks remain unverified until deployment.
+
+### Go refactor verification (2026-10-30)
+
+The pre-refactor graph is recorded in `testdata/resource_graph.json`, including
+component type/name/parent, provider inputs, dependencies and ignored properties.
+The regression test compares the complete graph with the current program. IAM
+policy comparisons account for equivalent singleton/array forms and statement
+ordering; other resource inputs must match exactly. Mock provider calls are
+recognized explicitly and unsupported invokes fail. The simulated preview also
+registers every identity with unresolved provider outputs and leaves container
+and redrive JSON unknown until the inputs resolve.
+
+The real-stack preview for this refactor could not run with the available Pulumi
+account: `pulumi stack ls --json` returned `[]`, and
+`pulumi preview --stack maciejpvp/LyricsPipeline/dev --non-interactive --diff`
+reported `no stack named 'maciejpvp/LyricsPipeline/dev' found`. The earlier successful
+preview above predates this refactor. Re-run preview with access to the intended
+existing stack before deployment. Local mocks do not prove provider JSON
+canonicalization, AWS authorization or an in-place cloud update. No deployment
+was performed as part of this refactor.

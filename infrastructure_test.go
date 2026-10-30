@@ -14,17 +14,20 @@ import (
 	"sync"
 	"testing"
 
+	"LyricsPipeline/internal/deployment"
+
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
 type infraMocks struct {
 	sync.Mutex
-	resources map[string]pulumi.MockResourceArgs
-}
-
-func (m *infraMocks) Call(args pulumi.MockCallArgs) (resource.PropertyMap, error) {
-	return resource.NewPropertyMapFromMap(map[string]interface{}{"json": "{}"}), nil
+	resources       map[string]pulumi.MockResourceArgs
+	allResources    map[string]pulumi.MockResourceArgs
+	calls           []pulumi.MockCallArgs
+	providerRegion  string
+	zoneRegion      string
+	previewUnknowns bool
 }
 
 func (m *infraMocks) NewResource(args pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
@@ -34,6 +37,10 @@ func (m *infraMocks) NewResource(args pulumi.MockResourceArgs) (string, resource
 		m.resources = map[string]pulumi.MockResourceArgs{}
 	}
 	m.resources[args.Name] = args
+	if m.allResources == nil {
+		m.allResources = map[string]pulumi.MockResourceArgs{}
+	}
+	m.allResources[args.TypeToken+"::"+args.Name] = args
 	outputs := args.Inputs.Copy()
 	for key, value := range map[resource.PropertyKey]string{
 		"name": args.Name, "arn": "arn:aws:mock::123456789012:" + args.Name,
@@ -42,6 +49,9 @@ func (m *infraMocks) NewResource(args pulumi.MockResourceArgs) (string, resource
 	} {
 		if _, ok := outputs[key]; !ok {
 			outputs[key] = resource.NewStringProperty(value)
+			if m.previewUnknowns && args.Custom {
+				outputs[key] = resource.MakeComputed(outputs[key])
+			}
 		}
 	}
 	return args.Name + "-id", outputs, nil
@@ -51,7 +61,7 @@ func TestSpotAutoscaling(t *testing.T) {
 	for _, tc := range []struct{ min, max, idle, backlog, cooldown int }{{0, 2, 5, 5, 300}, {1, 2, 3, 5, 300}, {0, 10, 5, 3, 600}} {
 		t.Run(fmt.Sprintf("min%d_max%d_backlog%d", tc.min, tc.max, tc.backlog), func(t *testing.T) {
 			mocks := &infraMocks{}
-			err := pulumi.RunErr(deploy,
+			err := pulumi.RunErr(deployment.Run,
 				pulumi.WithMocks("LyricsPipeline", "test", mocks),
 				withDeployment(fmt.Sprintf(`{"minTasks":%d,"maxTasks":%d,"idleMinutes":%d,"backlogPerWorker":%d,"scaleOutCooldownSeconds":%d}`, tc.min, tc.max, tc.idle, tc.backlog, tc.cooldown)))
 			if err != nil {
@@ -366,4 +376,8 @@ func testIdleExpression(t *testing.T, expression string, idle int) {
 			}
 		})
 	}
+}
+
+func withDeployment(raw string) pulumi.RunOption {
+	return func(info *pulumi.RunInfo) { info.Config = map[string]string{"LyricsPipeline:deployment": raw} }
 }
