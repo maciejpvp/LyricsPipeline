@@ -15,19 +15,30 @@ type Autoscaling struct {
 	ScaleIn  *appautoscaling.Policy
 }
 
-func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int, worker *Worker, queueName pulumi.StringInput, opts ...pulumi.ResourceOption) (*Autoscaling, error) {
+type AutoscalingArgs struct {
+	MinTasks                int
+	MaxTasks                int
+	IdleMinutes             int
+	BacklogPerWorker        int
+	ScaleOutCooldownSeconds int
+	Worker                  *Worker
+	QueueName               pulumi.StringInput
+}
+
+func NewAutoscaling(ctx *pulumi.Context, name string, args *AutoscalingArgs, opts ...pulumi.ResourceOption) (*Autoscaling, error) {
 	component := &Autoscaling{}
 	if err := ctx.RegisterComponentResource("lyrics:autoscaling:Autoscaling", name, component, opts...); err != nil {
 		return nil, err
 	}
 	parent := pulumi.Parent(component)
-	resourceID := pulumi.Sprintf("service/%s/%s", worker.Cluster.Name, worker.Service.Name)
+	resourceID := pulumi.Sprintf("service/%s/%s", args.Worker.Cluster.Name, args.Worker.Service.Name)
+	queueName := args.QueueName
 	targetArgs := &appautoscaling.TargetArgs{
 		ServiceNamespace:  pulumi.String("ecs"),
 		ScalableDimension: pulumi.String("ecs:service:DesiredCount"),
 		ResourceId:        resourceID,
-		MinCapacity:       pulumi.Int(minTasks),
-		MaxCapacity:       pulumi.Int(maxTasks),
+		MinCapacity:       pulumi.Int(args.MinTasks),
+		MaxCapacity:       pulumi.Int(args.MaxTasks),
 	}
 
 	target, err := appautoscaling.NewTarget(
@@ -35,6 +46,7 @@ func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int
 		name+"-scaling-target",
 		targetArgs,
 		parent,
+		pulumi.DependsOn([]pulumi.Resource{args.Worker.Service}),
 	)
 	if err != nil {
 		return nil, err
@@ -45,13 +57,14 @@ func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int
 		buildStepScalingPolicy(
 			resourceID,
 			"ChangeInCapacity",
-			60,
+			args.ScaleOutCooldownSeconds,
 			appautoscaling.PolicyStepScalingPolicyConfigurationStepAdjustmentArgs{
 				MetricIntervalLowerBound: pulumi.String("0"),
 				ScalingAdjustment:        pulumi.Int(1),
 			},
 		),
 		parent,
+		pulumi.DependsOn([]pulumi.Resource{target}),
 	)
 	if err != nil {
 		return nil, err
@@ -65,37 +78,50 @@ func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int
 			120,
 			appautoscaling.PolicyStepScalingPolicyConfigurationStepAdjustmentArgs{
 				MetricIntervalUpperBound: pulumi.String("0"),
-				ScalingAdjustment:        pulumi.Int(1),
+				ScalingAdjustment:        pulumi.Int(args.MinTasks),
 			},
 		),
 		parent,
+		pulumi.DependsOn([]pulumi.Resource{target}),
 	)
 	if err != nil {
 		return nil, err
 	}
-	for _, threshold := range []float64{0, 5, 20, 50} {
-		comparison := "GreaterThanThreshold"
-		alarmName := fmt.Sprintf("%s-messages-over-%d", name, int(threshold))
-		actions := pulumi.Array{scaleOut.Arn}
-		if threshold == 0 {
-			alarmName = name + "-messages-visible"
-		}
-		alarmArgs := &cloudwatch.MetricAlarmArgs{
-			Namespace:          pulumi.String("AWS/SQS"),
-			MetricName:         pulumi.String("ApproximateNumberOfMessagesVisible"),
-			Dimensions:         pulumi.StringMap{"QueueName": queueName},
-			Statistic:          pulumi.String("Maximum"),
-			Period:             pulumi.Int(60),
-			EvaluationPeriods:  pulumi.Int(1),
-			ComparisonOperator: pulumi.String(comparison),
-			Threshold:          pulumi.Float64(threshold),
-			AlarmActions:       actions,
-			TreatMissingData:   pulumi.String("notBreaching"),
-		}
-
-		if _, err = cloudwatch.NewMetricAlarm(ctx, alarmName, alarmArgs, parent); err != nil {
-			return nil, err
-		}
+	// Missing ECS counts are expected at zero capacity. Require an explicit
+	// in-flight zero before waking; missing SQS counts must not invent work.
+	// Once any capacity is reported, all ECS counts must report readiness.
+	scaleOutExpression := fmt.Sprintf(
+		"IF((FILL(desired, 0) == 0) AND (FILL(running, 0) == 0) AND (FILL(pending, 0) == 0) AND (FILL(in_flight, 1) == 0), IF(FILL(visible, 0) > 0, %d, 0), IF((FILL(running, 0) > 0) AND (FILL(desired, 0) == FILL(running, 0)) AND (FILL(pending, 1) == 0), FILL(visible, 0) / running, 0))",
+		args.BacklogPerWorker,
+	)
+	queueDimensions := pulumi.StringMap{"QueueName": queueName}
+	serviceDimensions := pulumi.StringMap{
+		"ClusterName": args.Worker.Cluster.Name,
+		"ServiceName": args.Worker.Service.Name,
+	}
+	if _, err = cloudwatch.NewMetricAlarm(ctx, name+"-messages-visible", &cloudwatch.MetricAlarmArgs{
+		MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
+			scalingMetric("visible", "AWS/SQS", "ApproximateNumberOfMessagesVisible", "Maximum", queueDimensions),
+			scalingMetric("in_flight", "AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "Maximum", queueDimensions),
+			scalingMetric("desired", "ECS/ContainerInsights", "DesiredTaskCount", "Maximum", serviceDimensions),
+			scalingMetric("running", "ECS/ContainerInsights", "RunningTaskCount", "Minimum", serviceDimensions),
+			scalingMetric("pending", "ECS/ContainerInsights", "PendingTaskCount", "Maximum", serviceDimensions),
+			cloudwatch.MetricAlarmMetricQueryArgs{
+				Id:         pulumi.String("backlog_per_worker"),
+				Expression: pulumi.String(scaleOutExpression),
+				Label:      pulumi.String("Waiting messages per ready worker, or wake-up demand"),
+				ReturnData: pulumi.Bool(true),
+			},
+		},
+		EvaluationPeriods:  pulumi.Int(1),
+		DatapointsToAlarm:  pulumi.Int(1),
+		ComparisonOperator: pulumi.String("GreaterThanOrEqualToThreshold"),
+		Threshold:          pulumi.Float64(args.BacklogPerWorker),
+		AlarmActions:       pulumi.Array{scaleOut.Arn},
+		TreatMissingData:   pulumi.String("notBreaching"),
+		AlarmDescription:   pulumi.StringPtr("Wake from zero or add one worker when waiting backlog per ready worker reaches the threshold; wait for desired capacity to be running"),
+	}, parent); err != nil {
+		return nil, err
 	}
 	emptyAlarmArgs := &cloudwatch.MetricAlarmArgs{
 		MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
@@ -122,14 +148,17 @@ func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int
 				ReturnData: pulumi.Bool(false),
 			},
 			cloudwatch.MetricAlarmMetricQueryArgs{
-				Id:         pulumi.String("total"),
-				Expression: pulumi.String("visible + in_flight"),
+				Id: pulumi.String("total"),
+				// Arithmetic alone treats missing inputs as zero. Fill each
+				// missing count with one so only two reported zeros mean idle.
+				Expression: pulumi.String("FILL(visible, 1) + FILL(in_flight, 1)"),
 				Label:      pulumi.String("Visible and in-flight messages"),
 				ReturnData: pulumi.Bool(true),
 			},
 		},
-		// Require 15 consecutive idle minutes to tolerate delayed/approximate SQS metrics.
-		EvaluationPeriods:  pulumi.Int(15),
+		// Every minute must report both counts as zero.
+		EvaluationPeriods:  pulumi.Int(args.IdleMinutes),
+		DatapointsToAlarm:  pulumi.Int(args.IdleMinutes),
 		ComparisonOperator: pulumi.String("LessThanOrEqualToThreshold"),
 		Threshold:          pulumi.Float64(0),
 		AlarmActions:       pulumi.Array{scaleIn.Arn},
@@ -151,6 +180,20 @@ func NewAutoscaling(ctx *pulumi.Context, name string, minTasks int, maxTasks int
 		return nil, err
 	}
 	return component, nil
+}
+
+func scalingMetric(id, namespace, metricName, statistic string, dimensions pulumi.StringMap) cloudwatch.MetricAlarmMetricQueryArgs {
+	return cloudwatch.MetricAlarmMetricQueryArgs{
+		Id: pulumi.String(id),
+		Metric: cloudwatch.MetricAlarmMetricQueryMetricArgs{
+			Namespace:  pulumi.String(namespace),
+			MetricName: pulumi.String(metricName),
+			Dimensions: dimensions,
+			Stat:       pulumi.String(statistic),
+			Period:     pulumi.Int(60),
+		},
+		ReturnData: pulumi.Bool(false),
+	}
 }
 
 func buildStepScalingPolicy(

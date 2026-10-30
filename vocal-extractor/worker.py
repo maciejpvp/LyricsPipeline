@@ -86,7 +86,13 @@ class Worker:
             while not self.stop_event.is_set():
                 for message in self.queue.receive(self.settings.sqs_wait_seconds, self.settings.visibility_timeout_seconds):
                     if self.stop_event.is_set():
-                        return
+                        # A long poll may finish after SIGTERM. Release this
+                        # receipt without starting a job or acknowledging it.
+                        try:
+                            self.queue.change_visibility(message.receipt_handle, 0)
+                        except Exception:
+                            logger.exception("failed to return SQS message during shutdown")
+                        continue
                     self._handle_message(message)
         logger.info(json.dumps({"event": "worker_stopped"}))
 

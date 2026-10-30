@@ -18,7 +18,20 @@ func NewWorker(ctx *pulumi.Context, name string, minTasks int, network *Network,
 		return nil, err
 	}
 	parent := pulumi.Parent(component)
-	cluster, err := ecs.NewCluster(ctx, name+"-cluster", &ecs.ClusterArgs{Tags: tags}, parent)
+	cluster, err := ecs.NewCluster(ctx, name+"-cluster", &ecs.ClusterArgs{
+		Tags: tags,
+		Settings: ecs.ClusterSettingArray{ecs.ClusterSettingArgs{
+			Name:  pulumi.String("containerInsights"),
+			Value: pulumi.String("enabled"),
+		}},
+	}, parent)
+	if err != nil {
+		return nil, err
+	}
+	capacityProviders, err := ecs.NewClusterCapacityProviders(ctx, name+"-capacity-providers", &ecs.ClusterCapacityProvidersArgs{
+		ClusterName:       cluster.Name,
+		CapacityProviders: pulumi.StringArray{pulumi.String("FARGATE_SPOT")},
+	}, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +54,16 @@ func NewWorker(ctx *pulumi.Context, name string, minTasks int, network *Network,
 		Cluster:        cluster.Arn,
 		TaskDefinition: image.TaskDefinition.Arn,
 		DesiredCount:   pulumi.Int(minTasks),
-		LaunchType:     pulumi.String("FARGATE"),
+		CapacityProviderStrategies: ecs.ServiceCapacityProviderStrategyArray{
+			ecs.ServiceCapacityProviderStrategyArgs{
+				CapacityProvider: pulumi.String("FARGATE_SPOT"),
+				Weight:           pulumi.Int(1),
+				Base:             pulumi.Int(0),
+			},
+		},
+		// AWS requires a new deployment when migrating from a launch type.
+		ForceNewDeployment: pulumi.Bool(true),
+		Triggers:           pulumi.StringMap{"capacityProvider": pulumi.String("FARGATE_SPOT")},
 		NetworkConfiguration: ecs.ServiceNetworkConfigurationArgs{
 			AssignPublicIp: pulumi.Bool(false),
 			SecurityGroups: pulumi.StringArray{securityGroup.ID()},
@@ -49,7 +71,7 @@ func NewWorker(ctx *pulumi.Context, name string, minTasks int, network *Network,
 		},
 		ForceDelete: pulumi.Bool(true),
 		Tags:        tags,
-	}, parent)
+	}, parent, pulumi.DependsOn([]pulumi.Resource{capacityProviders}), pulumi.IgnoreChanges([]string{"desiredCount"}))
 	if err != nil {
 		return nil, err
 	}

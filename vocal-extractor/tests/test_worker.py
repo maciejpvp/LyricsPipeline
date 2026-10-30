@@ -1,8 +1,8 @@
 import json
 import hashlib
 import sys
+import signal
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,17 @@ from config import Settings
 from events import parse_s3_jobs
 from sqs_queue import QueueMessage
 from worker import Worker
+
+
+@pytest.fixture
+def send_sigterm():
+    def send(worker):
+        previous = signal.signal(signal.SIGTERM, worker.stop)
+        try:
+            signal.raise_signal(signal.SIGTERM)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+    return send
 
 
 class FakeQueue:
@@ -154,7 +165,7 @@ def test_duplicate_manifest_is_acknowledged_without_reprocessing(tmp_path):
     assert store.downloads == []
 
 
-def test_shutdown_does_not_acknowledge_active_job(tmp_path):
+def test_shutdown_does_not_acknowledge_active_job(tmp_path, send_sigterm):
     queue = FakeQueue(event_body())
     store = FakeStore()
     started = threading.Event()
@@ -167,15 +178,124 @@ def test_shutdown_does_not_acknowledge_active_job(tmp_path):
             return super().separate(input_path, output_dir)
 
     worker = Worker(settings(tmp_path), queue, store, SlowProcessor())
-    thread = threading.Thread(target=worker._handle_message, args=(queue.messages[0],))
+    thread = threading.Thread(target=worker.run)
     thread.start()
     assert started.wait(timeout=2)
 
-    worker.stop()
-    time.sleep(0.05)
+    send_sigterm(worker)
     assert queue.deleted == []
 
     release.set()
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert queue.deleted == ["receipt"]
+
+
+def test_sigterm_during_receive_releases_message_without_processing(tmp_path, send_sigterm):
+    store = FakeStore()
+
+    class PollingQueue(FakeQueue):
+        def receive(self, wait_seconds, visibility_timeout):
+            # Match the registered signal handler while the long poll is open.
+            send_sigterm(worker)
+            return super().receive(wait_seconds, visibility_timeout)
+
+    queue = PollingQueue(event_body())
+    worker = Worker(settings(tmp_path), queue, store, FakeProcessor())
+    worker.run()
+    assert queue.extended == [("receipt", 0)]
+    assert queue.deleted == []
+    assert store.downloads == []
+    assert store.manifests == []
+
+
+def test_shutdown_release_failure_leaves_message_for_visibility_expiry(tmp_path, caplog):
+    class UnavailableQueue(FakeQueue):
+        def receive(self, wait_seconds, visibility_timeout):
+            worker.stop()
+            return super().receive(wait_seconds, visibility_timeout)
+
+        def change_visibility(self, receipt_handle, timeout):
+            raise RuntimeError("SQS unavailable")
+
+    queue = UnavailableQueue(event_body())
+    store = FakeStore()
+    worker = Worker(settings(tmp_path), queue, store, FakeProcessor())
+    worker.run()
+    assert queue.deleted == []
+    assert store.downloads == []
+    assert "failed to return SQS message" in caplog.text
+
+
+def test_no_acknowledgement_until_manifest_write_succeeds(tmp_path):
+    queue = FakeQueue(event_body())
+
+    class CheckingStore(FakeStore):
+        def upload_file(self, *args):
+            assert queue.deleted == []
+            super().upload_file(*args)
+
+        def upload_json(self, *args):
+            assert queue.deleted == []
+            assert len(self.uploads) == 2
+            super().upload_json(*args)
+
+    store = CheckingStore()
+    Worker(settings(tmp_path), queue, store, FakeProcessor())._handle_message(queue.messages[0])
+    assert queue.deleted == ["receipt"]
+
+
+def test_manifest_failure_is_not_acknowledged(tmp_path):
+    class UnavailableStore(FakeStore):
+        def upload_json(self, *args):
+            raise RuntimeError("S3 unavailable")
+
+    queue = FakeQueue(event_body())
+    store = UnavailableStore()
+    Worker(settings(tmp_path), queue, store, FakeProcessor())._handle_message(queue.messages[0])
+    assert len(store.uploads) == 2
+    assert store.manifests == []
+    assert queue.deleted == []
+
+
+def test_interrupted_job_is_redelivered_and_completed(tmp_path):
+    # BaseException models forced process death: normal worker exception handling
+    # must not acknowledge it. SQS visibility expiry itself is simulated below.
+    class ForcedStop(BaseException):
+        pass
+
+    class InterruptedProcessor(FakeProcessor):
+        def separate(self, input_path, output_dir):
+            worker.stop()
+            raise ForcedStop()
+
+    queue = FakeQueue(event_body())
+    store = FakeStore()
+    worker = Worker(settings(tmp_path), queue, store, InterruptedProcessor())
+    with pytest.raises(ForcedStop):
+        worker._handle_message(queue.messages[0])
+    assert queue.deleted == []
+    assert store.manifests == []
+
+    redelivered = QueueMessage("message", "new-receipt", event_body(), 2)
+    Worker(settings(tmp_path), queue, store, FakeProcessor())._handle_message(redelivered)
+    assert queue.deleted == ["new-receipt"]
+    assert len(store.manifests) == 1
+    assert len(store.downloads) == 2
+
+
+def test_redelivery_after_manifest_but_before_ack_skips_completed_job(tmp_path):
+    class AckFailureQueue(FakeQueue):
+        def delete(self, receipt_handle):
+            raise RuntimeError("connection lost before acknowledgement")
+
+    queue = AckFailureQueue(event_body())
+    store = FakeStore()
+    Worker(settings(tmp_path), queue, store, FakeProcessor())._handle_message(queue.messages[0])
+    assert len(store.manifests) == 1
+    assert queue.deleted == []
+    retry_queue = FakeQueue(event_body())
+    Worker(settings(tmp_path), retry_queue, store, FakeProcessor())._handle_message(retry_queue.messages[0])
+    assert retry_queue.deleted == ["receipt"]
+    assert len(store.downloads) == 1
+    assert len(store.manifests) == 1

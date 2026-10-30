@@ -5,10 +5,13 @@
   "image": "",
   "taskCpu": "2048",
   "taskMemory": "8192",
-  "minTasks": 1,
+  "minTasks": 0,
   "maxTasks": 2,
   "visibilitySeconds": 900,
-  "maxReceiveCount": 1,
+  "maxReceiveCount": 5,
+  "idleMinutes": 5,
+  "backlogPerWorker": 5,
+  "scaleOutCooldownSeconds": 300,
   "tags": {
     "Purpose": "vocal-extractor"
   }
