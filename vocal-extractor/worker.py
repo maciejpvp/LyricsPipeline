@@ -139,12 +139,10 @@ class Worker:
             self.store.download(job.bucket, job.key, input_path)
             self.processor.validate_audio(input_path)
             output_dir.mkdir(parents=True, exist_ok=True)
-            outputs = self.processor.separate(input_path, output_dir)
-            output_keys = []
-            for output in outputs:
-                key = f"{self.settings.output_prefix}{job.job_id}/{output.name}"
-                self.store.upload_file(job.bucket, key, output, "audio/wav")
-                output_keys.append(key)
+            output = self.processor.separate(input_path, output_dir)
+            key = f"{self.settings.output_prefix}{job.job_id}/vocals.wav"
+            self.store.upload_file(job.bucket, key, output, "audio/wav")
+            output_keys = [key]
             self.store.upload_json(job.bucket, manifest_key, {
                 "job_id": job.job_id, "source_key": job.key, "output_keys": output_keys,
                 "status": "success", "completed_at": datetime.now(timezone.utc).isoformat(),

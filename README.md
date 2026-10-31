@@ -145,7 +145,7 @@ flowchart LR
     Zero[0 workers] -->|S3 upload sends SQS message| Queue[Visible work]
     Queue -->|CloudWatch wakes first worker| Work[Fargate Spot: 1 to maxTasks workers]
     Work -->|At least 5 waiting jobs per ready worker, add 1, cooldown 300s| Work
-    Work --> Manifest[Write outputs and success manifest]
+    Work --> Manifest[Write vocals.wav and success manifest]
     Manifest --> Ack[Acknowledge SQS message]
     Ack -->|Both queue counts zero for 5 consecutive minutes| Zero
     Work -->|Forced interruption, no acknowledgement| Retry[Visibility timeout expires]
@@ -188,7 +188,7 @@ The Go suite uses Pulumi mocks to verify configuration, resource inputs, depende
 After a separately authorized deployment, verify in the target AWS environment:
 
 1. Confirm the service has desired/running count zero and uses only `FARGATE_SPOT`. Upload a unique input audio object and record its SQS message and alarm transition.
-2. Observe desired capacity rise from zero to one, Spot task placement, successful output stems and `output/{job_id}/manifest.json`, then message acknowledgement. Record visible/in-flight and desired/running/pending throughout; desired should remain one for this single file, including pending and active processing. Distinguish metric wake-up delay, container startup, and lack of Spot capacity.
+2. Observe desired capacity rise from zero to one, Spot task placement, successful `output/{job_id}/vocals.wav` and `output/{job_id}/manifest.json` uploads with no instrumental upload, then message acknowledgement. Record visible/in-flight and desired/running/pending throughout; desired should remain one for this single file, including pending and active processing. Distinguish metric wake-up delay, container startup, and lack of Spot capacity.
 3. Observe both visible and in-flight metrics report zero for five consecutive minute periods and the empty alarm set desired count to zero. Check in-flight work and missing metrics do not trigger shutdown.
 4. In a separate run, interrupt a long-running test task before its manifest is written. If testing forced termination, ensure the task cannot finish within its 120-second grace period. Confirm no acknowledgement, visibility expiry, a later delivery, and eventual success. Redeliver an already completed job and confirm `job_duplicate` with no reprocessing. Separately verify a persistently failing test message reaches the DLQ after five deliveries.
 5. With one ready worker, compare four versus five waiting messages. Observe one additional task only at the threshold and no further increase during startup/cooldown. In a separate stack with `maxTasks>=3`, compare nine versus ten waiting messages with two ready workers. Record actual alarm samples and scaling activities; use sufficiently long jobs so the queue remains above the threshold while metrics are published.

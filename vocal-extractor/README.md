@@ -4,7 +4,9 @@ CPU-only S3/SQS worker that separates vocals from audio with UVR-MDX-NET through
 
 ## Job contract
 
-Upload source audio to either `s3://$MEDIA_BUCKET/input/{filename}` or `s3://$MEDIA_BUCKET/input/{job_id}/{filename}`. For a flat `input/{filename}` key, the worker derives a stable 16-character job ID from the bucket and object key. S3 sends the object-created notification to SQS, and Fargate workers process one message at a time. Completed WAV stems and `manifest.json` are written to `output/{job_id}/`. Source objects are retained.
+Upload source audio to either `s3://$MEDIA_BUCKET/input/{filename}` or `s3://$MEDIA_BUCKET/input/{job_id}/{filename}`. For a flat `input/{filename}` key, the worker derives a stable 16-character job ID from the bucket and object key. S3 sends the object-created notification to SQS, and Fargate workers process one message at a time. Each completed job writes only `vocals.wav` and `manifest.json` to `output/{job_id}/`. The audio filename is always `vocals.wav`, regardless of the input filename; the manifest's `output_keys` contains only that audio object's key. The separator saves only the vocal stem, and no instrumental is uploaded. `OUTPUT_PREFIX` can override the default `output/` prefix. Source objects are retained.
+
+Existing S3 results are left unchanged. Jobs with an existing manifest are skipped as before, so updating the worker does not rename old results or reprocess completed jobs.
 
 The worker acknowledges a message only after the successful manifest is uploaded. Failed or interrupted messages can be delivered up to five times by default (`maxReceiveCount=5`), then move to the dead-letter queue. On redelivery the worker checks for a success manifest and skips completed jobs. This is at-least-once processing: concurrent duplicates can still perform the same work; there is no exactly-once guarantee or distributed lock.
 
