@@ -39,7 +39,9 @@ The Pulumi stack creates the media bucket, SQS queue/DLQ, S3 notification, IAM r
 Infrastructure settings are stored as one typed JSON object in Pulumi configuration rather than as individual environment variables. Set `minTasks` and `maxTasks` to control the autoscaling floor and ceiling, `backlogPerWorker` for waiting jobs per ready worker (default 5), `scaleOutCooldownSeconds` for the shared scale-out cooldown (default 300), `idleMinutes` for the idle window, and `maxReceiveCount` for retry deliveries. Both new scaling settings must be positive integers; omitted fields receive defaults in existing stacks. The following initializes a new stack; for an existing stack use the preserving migration in the repository README:
 
 ```bash
-pulumi config set deployment "$(tr -d '\n' < deployment.example.json)"
+# Select the intended existing stack. Shared values come from Pulumi.yaml.
+pulumi stack select <stack>
+pulumi preview
 pulumi up
 ```
 
@@ -50,7 +52,7 @@ The first `pulumi up` can omit `image`; Pulumi uses an ECR `:bootstrap` referenc
 pulumi up
 ```
 
-The script builds only `./vocal-extractor`, pushes a Git-based tag to the ECR repository created by Pulumi, resolves the immutable image digest, and stores it in the Pulumi `deploymentImage` setting. It does not modify or rebuild the rest of the application. AWS credentials and the AWS provider's region can still be supplied through the normal AWS profile/environment configuration.
+The script builds only `./vocal-extractor`, pushes a Git-based tag to the ECR repository created by Pulumi, resolves the immutable image digest, and stores it in the Pulumi `image` setting. It does not modify or rebuild the rest of the application. AWS credentials can use the normal AWS profile/environment configuration. The publisher reads the region from the selected stack's `aws:region` setting, matching the provider and worker.
 
 ## Tests
 

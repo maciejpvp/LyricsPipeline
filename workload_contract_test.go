@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"LyricsPipeline/internal/config"
+	"LyricsPipeline/internal/configtest"
 	"LyricsPipeline/internal/ecs"
 	"LyricsPipeline/internal/iam"
 	"LyricsPipeline/internal/ingestion"
@@ -56,13 +57,17 @@ func readContainer(t *testing.T, mocks *infraMocks, name string) workerContainer
 }
 
 func TestImageSelection(t *testing.T) {
-	for _, tc := range []struct{ name, raw, override, want string }{
+	for _, tc := range []struct{ name, image, want string }{
 		{name: "bootstrap", want: "registry.example/vocal-extractor-image:bootstrap"},
-		{name: "deployment image", raw: `{"image":"registry/image:tag"}`, want: "registry/image:tag"},
-		{name: "published digest", raw: `{"image":"registry/image:tag"}`, override: "registry/image@sha256:digest", want: "registry/image@sha256:digest"},
+		{name: "configured tag", image: "registry/image:tag", want: "registry/image:tag"},
+		{name: "published digest", image: "registry/image@sha256:digest", want: "registry/image@sha256:digest"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			container := readContainer(t, runDeployment(t, tc.raw, tc.override), "vocal-extractor-task")
+			values := map[string]string{}
+			if tc.image != "" {
+				values["image"] = tc.image
+			}
+			container := readContainer(t, runDeployment(t, values), "vocal-extractor-task")
 			if container.Image != tc.want {
 				t.Fatalf("image=%q, want %q", container.Image, tc.want)
 			}
@@ -71,7 +76,11 @@ func TestImageSelection(t *testing.T) {
 }
 
 func TestSharedObjectLayout(t *testing.T) {
-	cfg := config.Defaults()
+	var cfg config.Deployment
+	loadErr := pulumi.RunErr(func(ctx *pulumi.Context) error { var err error; cfg, err = config.Load(ctx); return err }, pulumi.WithMocks("LyricsPipeline", "test", &infraMocks{}), func(info *pulumi.RunInfo) { info.Config = configtest.ProjectValues(t) })
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
 	cfg.Objects = config.ObjectLayout{Input: "uploads/audio", Output: "results/stems"}
 	mocks := &infraMocks{}
 	const bucketARN = "arn:aws:s3:::media"

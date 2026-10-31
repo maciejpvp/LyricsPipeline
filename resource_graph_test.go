@@ -35,7 +35,7 @@ func TestResourceGraphCompatibility(t *testing.T) {
 	if err := json.Unmarshal(data, &before); err != nil {
 		t.Fatal(err)
 	}
-	mocks := runDeployment(t, "", "")
+	mocks := runDeployment(t, nil)
 	if len(mocks.allResources) != len(before) {
 		t.Fatalf("resource count changed: %d -> %d", len(before), len(mocks.allResources))
 	}
@@ -111,19 +111,17 @@ func normalizePolicy(value any) any {
 	}
 }
 
-func runDeployment(t *testing.T, raw, image string) *infraMocks {
+func runDeployment(t *testing.T, values map[string]string) *infraMocks {
 	t.Helper()
 	mocks := &infraMocks{}
-	if err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), func(info *pulumi.RunInfo) {
-		info.Config = map[string]string{"LyricsPipeline:deployment": raw, "LyricsPipeline:deploymentImage": image}
-	}); err != nil {
+	if err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), withStackConfig(t, values)); err != nil {
 		t.Fatal(err)
 	}
 	return mocks
 }
 
 func TestCreationReadiness(t *testing.T) {
-	mocks := runDeployment(t, "", "")
+	mocks := runDeployment(t, nil)
 	for _, edge := range []struct{ child, parent string }{
 		{"notification", "queue-policy"}, {"nat", "igw"}, {"service", "capacity-providers"},
 		{"service", "internet-route"}, {"service", "public-association"}, {"service", "private-association"}, {"service", "nat-route"},
@@ -142,15 +140,15 @@ func TestCreationReadiness(t *testing.T) {
 }
 
 func TestValidationBeforeRegistration(t *testing.T) {
-	for _, tc := range []struct{ name, raw, region, zoneRegion, want string }{
-		{name: "invalid configuration", raw: `{"taskCpu":"garbage"}`, want: "taskCpu"},
-		{name: "unknown setting", raw: `{"maxTask":2}`, want: "maxTask"},
-		{name: "provider mismatch", region: "us-east-1", want: "deployment.region"},
-		{name: "zone mismatch", zoneRegion: "us-east-1", want: "deployment.availabilityZone"},
+	for _, tc := range []struct{ name, key, raw, region, zoneRegion, want string }{
+		{name: "invalid configuration", key: "ecs", raw: `{"cpuUnits":"garbage"}`, want: "cpuUnits"},
+		{name: "unknown setting", key: "autoscaling", raw: `{"maxTask":2}`, want: "maxTask"},
+		{name: "provider mismatch", region: "us-east-1", want: "aws:region"},
+		{name: "zone mismatch", zoneRegion: "us-east-1", want: "vpc.availabilityZone"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mocks := &infraMocks{providerRegion: tc.region, zoneRegion: tc.zoneRegion}
-			err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), withDeployment(tc.raw))
+			err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), withStackConfig(t, map[string]string{tc.key: tc.raw}))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %s, got %v", tc.want, err)
 			}
@@ -179,7 +177,7 @@ func TestPreviewWithUnknownOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	mocks := &infraMocks{previewUnknowns: true}
-	if err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), func(info *pulumi.RunInfo) { info.DryRun = true }); err != nil {
+	if err := pulumi.RunErr(deployment.Run, pulumi.WithMocks("LyricsPipeline", "test", mocks), withStackConfig(t, nil), func(info *pulumi.RunInfo) { info.DryRun = true }); err != nil {
 		t.Fatal(err)
 	}
 	if len(mocks.allResources) != len(before) {

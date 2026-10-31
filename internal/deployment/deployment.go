@@ -19,9 +19,7 @@ import (
 )
 
 func Run(ctx *pulumi.Context) error {
-	raw, _ := ctx.GetConfig(ctx.Project() + ":deployment")
-	imageOverride, _ := ctx.GetConfig(ctx.Project() + ":deploymentImage")
-	settings, err := config.Parse(raw, imageOverride)
+	settings, err := config.Load(ctx)
 	if err != nil {
 		return err
 	}
@@ -48,14 +46,14 @@ func (d *deployment) validateLocation() error {
 		return fmt.Errorf("read AWS provider region: %w", err)
 	}
 	if region.Region != d.settings.Region {
-		return fmt.Errorf("deployment.region %q differs from AWS provider region %q; align deployment.region and the provider configuration", d.settings.Region, region.Region)
+		return fmt.Errorf("aws:region %q differs from AWS provider region %q; check the AWS provider configuration", d.settings.Region, region.Region)
 	}
 	zone, err := aws.GetAvailabilityZone(d.ctx, &aws.GetAvailabilityZoneArgs{Name: pulumi.StringRef(d.settings.AvailabilityZone)})
 	if err != nil {
-		return fmt.Errorf("deployment.availabilityZone %q: %w", d.settings.AvailabilityZone, err)
+		return fmt.Errorf("vpc.availabilityZone %q: %w", d.settings.AvailabilityZone, err)
 	}
 	if zone.Region != d.settings.Region {
-		return fmt.Errorf("deployment.availabilityZone %q belongs to %q, expected %q", d.settings.AvailabilityZone, zone.Region, d.settings.Region)
+		return fmt.Errorf("vpc.availabilityZone %q belongs to %q, expected %q", d.settings.AvailabilityZone, zone.Region, d.settings.Region)
 	}
 	return nil
 }

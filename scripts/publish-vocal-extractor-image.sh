@@ -20,11 +20,11 @@ fi
 repository_url="$(pulumi stack output repositoryUrl)"
 registry="${repository_url%%/*}"
 repository_name="${repository_url##*/}"
-region="${AWS_REGION:-$(aws configure get region)}"
+region="$(pulumi config get aws:region)"
 tag="${GIT_SHA:-$(git rev-parse --short=12 HEAD)}"
 
 if [[ -z "$region" ]]; then
-	printf '%s\n' "AWS_REGION or an AWS CLI default region is required" >&2
+	printf '%s\n' "aws:region must be configured for the selected Pulumi stack" >&2
 	exit 1
 fi
 
@@ -34,7 +34,7 @@ docker push "$repository_url:$tag" >/dev/null
 
 digest="$(aws ecr describe-images --region "$region" --repository-name "$repository_name" --image-ids imageTag="$tag" --query 'imageDetails[0].imageDigest' --output text)"
 image_reference="$repository_url@$digest"
-pulumi config set deploymentImage "$image_reference"
+pulumi config set image "$image_reference"
 
 printf 'Published %s\n' "$image_reference"
 printf '%s\n' "Run 'pulumi up' to deploy this image."

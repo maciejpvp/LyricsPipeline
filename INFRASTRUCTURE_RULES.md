@@ -18,7 +18,7 @@ packages use their responsibility name. All implementation packages live under `
 
 | Package | Responsibility |
 | --- | --- |
-| `config` | Public JSON parsing, typed settings, defaults and validation |
+| `config` | Typed effective Pulumi configuration, unit conversion and validation |
 | `deployment` | Location checks, dependency wiring and stack exports |
 | `vpc` | VPC, subnets, gateways and routing |
 | `s3` | Private encrypted object storage |
@@ -109,27 +109,43 @@ vpcID := ref.GetStringOutput(pulumi.String("vpcId"))
 
 ## Use strongly typed configuration
 
-Keep the public flat `deployment` JSON keys and string CPU/memory values compatible.
-`deploymentImage` continues to override `deployment.image`; an empty image retains
-the provisioning-only `:bootstrap` reference. Parse this wire representation into
-nested domain structs before registering resources. Reject unknown keys, malformed
-or trailing JSON, unsupported Fargate CPU/memory pairs and out-of-range settings.
-Errors must identify the setting that needs attention.
+`Pulumi.yaml` is the single source of shared workload values. Use native project
+configuration (`value:` wrappers for objects). `Pulumi.<stack>.yaml` files contain
+only intentional overrides and deployment-specific values; do not copy project
+values into the development stack. Follow
+[Pulumi project configuration](https://www.pulumi.com/docs/iac/concepts/config/#project-level-configuration).
 
-Use distinct `CPUUnits` and `MemoryMiB` types, `time.Duration` for time settings and
-`netip.Prefix` for CIDRs. Convert units only at JSON/SDK boundaries. Keep defaults in
-`config.Defaults()`; keep unrelated settings with equal values separate. The input
-and output object prefixes have one owner (`config.ObjectLayout`) shared by IAM,
-notifications and the container environment.
+Go owns types, unit conversions, validation and resource construction. It must not
+supply application fallback values or read YAML itself. Read the already resolved
+configuration through the official API. Require all settings and all fields in
+service objects, including valid zero-valued fields; report omissions explicitly.
+Do not reintroduce `Defaults()` or a second schema-key list alongside struct tags.
 
-Resolve the current provider region and availability zone before resource creation.
-Fail on location mismatches; do not silently create a new provider or move resources.
-This needs read access to the provider region and EC2 availability-zone data source.
-CloudWatch's one-minute metric evaluation permits an idle window of at most one day.
-Queue visibility must be 1–43200 seconds, retries 2–1000, and the scale-out cooldown
-must be a positive AWS 32-bit integer. Fargate size validation follows the
-[AWS Linux task-size table](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html).
-The alarm-window bound follows [PutMetricAlarm](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricAlarm.html).
+Shared groups are `vpc`, `s3`, `ecs`, `sqs` and `autoscaling`, plus scalar `name`,
+`image`, `aws:region` and dynamic `tags`. Use distinct `CPUUnits`, `MemoryMiB`,
+`time.Duration` and `netip.Prefix` internally. The shared file also owns CIDRs,
+object prefixes, task lifecycle/health parameters and queue retention/polling.
+Protocol constants, units and AWS validation constraints remain code concerns.
+
+Project/stack inheritance is native Pulumi whole-key replacement, not a custom
+Go merge. A deliberate service override must contain the complete object. The
+published `image` is a separate scalar so publishing cannot replace the shared ECS
+settings. Empty `image` requests the existing provisioning-only bootstrap reference.
+
+Legacy `deployment` / `deploymentImage` keys produce a migration error. Use
+`scripts/migrate-pulumi-config.py` to preserve configured differences and unrelated
+stack metadata; require preview before deployment. Do not retain runtime fallback
+precedence between old and new formats.
+
+Resolve the effective provider region and availability zone before resources are
+registered. Reject unknown/null/missing fields, invalid Fargate resource pairs,
+invalid network layouts and out-of-range timings before creating resources. The
+Fargate resource table follows [AWS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html).
+
+Tests load `Pulumi.yaml` as their configuration source. Do not duplicate defaults
+in test helpers or require development settings to equal constants in Go. Test
+that valid edits are honored and missing settings are rejected. Resource snapshots
+remain an explicit compatibility baseline, not a runtime configuration source.
 
 Never hardcode secrets. Use `config.RequireSecret` or encrypted Pulumi configuration values for credentials, tokens, and passwords.
 

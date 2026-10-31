@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"LyricsPipeline/internal/configtest"
 	"LyricsPipeline/internal/deployment"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
@@ -63,7 +64,7 @@ func TestSpotAutoscaling(t *testing.T) {
 			mocks := &infraMocks{}
 			err := pulumi.RunErr(deployment.Run,
 				pulumi.WithMocks("LyricsPipeline", "test", mocks),
-				withDeployment(fmt.Sprintf(`{"minTasks":%d,"maxTasks":%d,"idleMinutes":%d,"backlogPerWorker":%d,"scaleOutCooldownSeconds":%d}`, tc.min, tc.max, tc.idle, tc.backlog, tc.cooldown)))
+				withStackConfig(t, map[string]string{"autoscaling": fmt.Sprintf(`{"minTasks":%d,"maxTasks":%d,"idleMinutes":%d,"backlogPerWorker":%d,"scaleOutCooldownSeconds":%d}`, tc.min, tc.max, tc.idle, tc.backlog, tc.cooldown)}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -378,6 +379,18 @@ func testIdleExpression(t *testing.T, expression string, idle int) {
 	}
 }
 
-func withDeployment(raw string) pulumi.RunOption {
-	return func(info *pulumi.RunInfo) { info.Config = map[string]string{"LyricsPipeline:deployment": raw} }
+func withStackConfig(t *testing.T, values map[string]string) pulumi.RunOption {
+	return func(info *pulumi.RunInfo) {
+		info.Config = configtest.ProjectValues(t)
+		for key, value := range values {
+			if !strings.Contains(key, ":") {
+				key = "LyricsPipeline:" + key
+			}
+			if key == "LyricsPipeline:autoscaling" || key == "LyricsPipeline:ecs" || key == "LyricsPipeline:sqs" || key == "LyricsPipeline:vpc" {
+				configtest.EditObject(t, info.Config, key, value)
+			} else {
+				info.Config[key] = value
+			}
+		}
+	}
 }

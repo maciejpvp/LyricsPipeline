@@ -31,13 +31,18 @@ flowchart TD
     Queue --> Scaling
 ```
 
-The public `deployment` JSON stays flat and `deploymentImage` retains precedence.
-Internally, settings use nested structs, separate CPU/MiB types, durations and parsed
-CIDRs. All defaults, including object prefixes, are in
-[`config.Defaults()`](internal/config/defaults.go). Prefixes flow to IAM scopes,
-S3 notification filters and the worker environment from the same object layout.
-JSON documents use concrete structs or the typed IAM policy builder; asynchronous
-inputs are combined through typed `pulumix` callbacks.
+Shared configuration has one source: [`Pulumi.yaml`](Pulumi.yaml). Pulumi resolves
+project values and explicit stack overrides before starting the Go program. The
+loader reads the effective values into typed structs, converts units and validates
+them. Go contains no `Defaults()` function or fallback application values. Missing
+settings or object fields are errors, including fields where zero is valid.
+
+All workload settings are visible in the project file: VPC layout, object prefixes,
+ECS resources/lifecycle/health checks, SQS polling/retention and scaling limits.
+Provider protocol constants and validation constraints remain in Go. Object prefixes
+flow to IAM, S3 notifications and the worker environment from the same typed layout.
+Provider JSON documents use concrete structs or the IAM policy builder, with typed
+`pulumix` callbacks.
 
 Resource packages use AWS service names: `s3`, `sqs`, `ecr`, `iam`, `vpc`, `ecs`
 and `autoscaling`. `config`, `deployment` and `ingestion` describe configuration
@@ -50,14 +55,88 @@ The Go name `ecs.TaskDefinition` replaces `Image`, while the historical Pulumi
 token stays `lyrics:image:Image`; `ecs.Service` retains `lyrics:worker:Worker`.
 S3/SQS wiring retains its queue parent. The resource-graph regression test preserves all 44 pre-refactor component/resource
 identities, inputs and original dependencies. Additional tests check IAM scopes,
-container JSON, image precedence, shared prefixes and creation readiness.
+container JSON, image selection, shared prefixes and creation readiness.
 See [Infrastructure Rules](INFRASTRUCTURE_RULES.md) for conventions and ownership.
 
-Existing valid configuration needs no format migration. Unknown fields, malformed
-JSON, invalid Fargate sizes, out-of-range limits and location mismatches now fail
-before resource registration. Align `deployment.region` with the effective AWS
-provider region and choose an availability zone in that region. Keep the existing
-AWS provider/profile configuration; no new provider identity is introduced.
+## Stack configuration
+
+Edit shared workload values in [`Pulumi.yaml`](Pulumi.yaml). They apply to a fresh
+stack automatically. [`Pulumi.dev.yaml`](Pulumi.dev.yaml) contains no copies of those
+values: its empty `config` block inherits the project configuration. It is reserved
+for intentional environment differences and the published image reference.
+
+| Setting | Owner |
+| --- | --- |
+| `aws:region`, `name`, `tags` | Shared project values |
+| `vpc` | Availability zone, VPC/subnet CIDRs and internet route |
+| `s3` | Input and output object prefixes |
+| `ecs` | Numeric CPU/MiB, stop timeout, log retention and health check |
+| `sqs` | Visibility, retries, long polling and dead-letter retention |
+| `autoscaling` | Task limits, idle window, backlog and both cooldowns |
+| `image` | Empty project value for bootstrap; published stack digest |
+
+Project objects use a `value:` wrapper and no project prefix; stack objects use
+`LyricsPipeline:<key>:` without the wrapper. This is native
+[Pulumi project-level configuration](https://www.pulumi.com/docs/iac/concepts/config/#project-level-configuration).
+The runtime remains Go; YAML provides values, not resource declarations.
+
+For normal shared-setting changes:
+
+```bash
+pulumi stack select dev
+# Edit the desired value in Pulumi.yaml, e.g. autoscaling.value.maxTasks.
+git diff -- Pulumi.yaml
+pulumi config get autoscaling
+pulumi preview
+```
+
+Pulumi's CLI currently writes stack settings, not shared project settings. An
+explicit stack key replaces the entire project key: objects are not deep-merged.
+For a deliberate service override, provide the complete object in the stack file.
+Missing fields fail validation instead of being filled by hidden Go defaults.
+Keep ordinary shared changes in the project file to avoid unnecessary stack copies.
+
+The image is a separate scalar because it changes per deployment. Publishing it
+must not replace the whole `ecs` object and discard inherited CPU/health settings:
+
+```bash
+pulumi config set image <repository-url>@<digest>
+```
+
+The publishing script performs that update automatically and reads `aws:region`
+from the effective Pulumi configuration. Empty `image` selects ECR `:bootstrap`
+for provisioning; processing requires a real published image.
+
+For a new environment, initialize/select its stack through the normal workflow.
+It inherits the project values; only intentional differences belong in
+`Pulumi.<stack>.yaml`. Keep project/shared stack settings in version control, as
+recommended by [Pulumi](https://www.pulumi.com/docs/iac/concepts/projects/stack-settings-file/).
+Use secret configuration APIs and encrypted stack values for future sensitive data.
+
+### Migrate an existing deployment object
+
+The old flat `deployment` object and `deploymentImage` override are no longer read.
+If either key is still present, the program stops with a migration message instead
+of silently provisioning with defaults. From the project root, migrate the intended
+existing stack:
+
+```bash
+python3 scripts/migrate-pulumi-config.py --stack <stack>
+pulumi config --stack <stack>
+pulumi preview --stack <stack>
+```
+
+The script uses the Pulumi CLI and Python standard library. It converts old CPU/RAM
+strings into numeric units, preserves configured task/queue/scaling limits and tags,
+and moves the effective image to `image` (the old published override takes
+precedence). It reads project values using the Pulumi CLI, builds complete override
+objects only for actual differences, and removes redundant copies from the stack.
+It refuses conflicting settings and leaves unrelated keys, encrypted values and
+secret-provider metadata intact. If a configuration write fails, it restores
+the original local stack file. Legacy keys are removed only after the new objects
+have been saved. Re-running the script after success does nothing. It does not run
+`pulumi up` or create resources. A custom settings path can be passed with
+`--config-file`.
 
 ## Scale to zero with Fargate Spot
 
@@ -91,33 +170,6 @@ Cold-start latency includes SQS/CloudWatch metrics, alarm evaluation, container/
 
 SIGTERM stops new polling while the active message can finish within `stopTimeout=120`. Late long-poll receipts are returned with visibility zero. Forced termination leaves the message unacknowledged until visibility expires; the worker checks the manifest on retry and skips completed jobs. A matching job is never acknowledged before its success manifest is saved. By default, after five unsuccessful deliveries SQS moves the message to the DLQ. Processing is at least once, with no exactly-once guarantee and no new locking system.
 
-## Existing-stack configuration migration
-
-Code defaults fill omitted fields, so existing stacks automatically use `backlogPerWorker=5` and `scaleOutCooldownSeconds=300` on the next deployment unless explicitly configured. Resource names, the scaling target, and the two alarms are retained; the cluster setting, scale-out cooldown, and visible-message alarm inputs change in place. Existing saved `minTasks=1` or `maxReceiveCount=1` values are not automatically migrated; the latter fails validation. Select the intended stack, inspect its configuration, and merge only the desired values into the existing `deployment` JSON. Do not replace an existing deployment object with the example, which would overwrite custom settings.
-
-Run from the repository root with the intended stack selected (`pulumi stack select <stack>`):
-
-```bash
-# jq updates just these fields, retaining every other deployment setting.
-# A failing config read/jq command stops before any configuration write.
-(
-  set -eu
-  existing_deployment="$(pulumi config get deployment)"
-  updated_deployment="$(printf '%s' "$existing_deployment" | jq -ce '
-    if type == "object" then
-      . + {minTasks: 0, maxReceiveCount: 5, idleMinutes: 5, backlogPerWorker: 5, scaleOutCooldownSeconds: 300}
-    else error("deployment must be a JSON object") end
-  ')"
-  pulumi config set deployment "$updated_deployment"
-)
-pulumi config get deployment
-pulumi preview
-```
-
-This preserves `maxTasks`, CPU, memory, visibility, region, image, tags and all other fields. The separate `deploymentImage` setting also remains unchanged. Review the preview for standard Container Insights, the shared scale-out cooldown and metric-math alarm. For stacks predating the Spot migration, also review Spot association/strategy, retry policy and deletion of the three redundant alarms. No unrelated network or storage replacement is intended. Existing desired capacity is left to autoscaling and can take the idle window to fall to zero. Deploy separately through the normal review process; implementation and local verification do not create AWS resources or run `pulumi up`.
-
-For a new stack, initialize `deployment` from [deployment.example.json](deployment.example.json) instead. Publish a real worker image as described in the worker README before expecting processing to work; the bootstrap reference is only a provisioning placeholder.
-
 ## Verification
 
 From the repository root:
@@ -126,6 +178,7 @@ From the repository root:
 gofmt -w main.go internal *_test.go
 go test ./...
 go vet ./...
+python3 -m unittest discover -s scripts/tests -v
 python -m pytest -q vocal-extractor/tests
 pulumi preview
 ```
@@ -163,3 +216,31 @@ preview above predates this refactor. Re-run preview with access to the intended
 existing stack before deployment. Local mocks do not prove provider JSON
 canonicalization, AWS authorization or an in-place cloud update. No deployment
 was performed as part of this refactor.
+
+### Native configuration verification (2026-10-31)
+
+Configuration tests load `Pulumi.dev.yaml` through Pulumi's own stack-settings
+reader and exercise the real Go configuration API. The unchanged resource-graph
+fixture still checks all 44 identities and effective inputs. Script tests cover
+migration conflicts, failure recovery, image publishing and a single region/image
+source. A separate isolated local-backend CLI check verified native YAML objects,
+custom settings, legacy image precedence, preservation of an unrelated encrypted
+key and an unchanged second migration run. These local checks create no AWS resources.
+
+The real existing-stack preview was attempted again and reported
+`no stack named 'maciejpvp/LyricsPipeline/dev' found` with the available account.
+Cloud preview and migration of that stack remain unverified; no `pulumi up` ran.
+
+### Central configuration verification (2026-10-31)
+
+`Defaults()` has been removed. Tests read the actual project configuration rather
+than maintain a second set of application defaults. They check inheritance,
+required fields (including omitted zero-valued fields), deliberate central edits,
+unit conversions and preservation of the existing resource graph. The development
+stack is validated without requiring its values to equal any hardcoded defaults.
+
+An isolated real-CLI check confirmed that an empty stack inherits the project,
+changing a shared value affects the effective configuration, and publishing a
+scalar `image` leaves the complete ECS configuration inherited. The legacy migration
+also preserved custom values and encrypted unrelated data while producing complete
+object overrides. No AWS resources were created or changed by these checks.

@@ -1,0 +1,3 @@
+# Inherits shared settings from Pulumi.yaml.
+# The image publisher writes only LyricsPipeline:image for this stack.
+config: {}

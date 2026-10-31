@@ -1,5 +1,4 @@
-// Package config parses the public deployment JSON into validated infrastructure settings.
-// It has no dependency on Pulumi or on AWS resource constructors.
+// Package config loads native Pulumi stack settings into validated domain structs.
 package config
 
 import (

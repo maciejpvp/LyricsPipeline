@@ -11,25 +11,25 @@ import (
 func (d Deployment) Validate() error {
 	var problems []error
 	for _, field := range []struct{ name, value string }{
-		{"name", d.Name}, {"region", d.Region}, {"availabilityZone", d.AvailabilityZone},
+		{"name", d.Name}, {"aws:region", d.Region}, {"vpc.availabilityZone", d.AvailabilityZone},
 	} {
 		if strings.TrimSpace(field.value) == "" {
-			problems = append(problems, fmt.Errorf("deployment.%s: must not be empty", field.name))
+			problems = append(problems, fmt.Errorf("%s: must not be empty", field.name))
 		}
 	}
 	if d.Scaling.MinTasks < 0 {
-		problems = append(problems, errors.New("deployment.minTasks: must be non-negative"))
+		problems = append(problems, errors.New("autoscaling.minTasks: must be non-negative"))
 	}
 	if d.Scaling.MaxTasks < 1 || d.Scaling.MaxTasks < d.Scaling.MinTasks || d.Scaling.MaxTasks > math.MaxInt32 {
-		problems = append(problems, errors.New("deployment.maxTasks: must be positive, at least minTasks, and fit an AWS 32-bit integer"))
+		problems = append(problems, errors.New("autoscaling.maxTasks: must be positive, at least minTasks, and fit an AWS 32-bit integer"))
 	}
 	if d.Queue.MaxReceiveCount < 2 || d.Queue.MaxReceiveCount > 1000 {
-		problems = append(problems, errors.New("deployment.maxReceiveCount: must be between 2 and 1000"))
+		problems = append(problems, errors.New("sqs.maxReceiveCount: must be between 2 and 1000"))
 	}
 	if d.Scaling.BacklogPerWorker < 1 {
-		problems = append(problems, errors.New("deployment.backlogPerWorker: must be positive"))
+		problems = append(problems, errors.New("autoscaling.backlogPerWorker: must be positive"))
 	}
-	problems = append(problems, d.Task.Resources.Validate(), d.Network.Validate())
+	problems = append(problems, d.Task.Resources.Validate(), d.Network.Validate(), d.Objects.Validate())
 	return errors.Join(problems...)
 }
 
@@ -59,7 +59,7 @@ func (r TaskResources) Validate() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("deployment.taskCpu/taskMemory: unsupported Fargate combination %d CPU units and %d MiB", r.CPU, r.Memory)
+	return fmt.Errorf("ecs.cpuUnits/memoryMiB: unsupported Fargate combination %d CPU units and %d MiB", r.CPU, r.Memory)
 }
 
 func (n Network) Validate() error {
@@ -80,6 +80,22 @@ func (n Network) Validate() error {
 	}
 	if n.PublicSubnet.Overlaps(n.PrivateSubnet) {
 		return errors.New("network: public and private subnets must not overlap")
+	}
+	return nil
+}
+
+func (o ObjectLayout) Validate() error {
+	for _, field := range []struct {
+		name   string
+		prefix ObjectPrefix
+	}{{"inputPrefix", o.Input}, {"outputPrefix", o.Output}} {
+		prefix := string(field.prefix)
+		if strings.TrimSpace(prefix) == "" || strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") {
+			return fmt.Errorf("s3.%s: expected a non-empty prefix without leading or trailing slash", field.name)
+		}
+	}
+	if o.Input == o.Output || strings.HasPrefix(string(o.Output), o.Input.NotificationPrefix()) {
+		return errors.New("s3.outputPrefix: must not be inside inputPrefix, to avoid triggering input notifications")
 	}
 	return nil
 }
