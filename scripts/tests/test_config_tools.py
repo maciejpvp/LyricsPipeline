@@ -144,7 +144,7 @@ class PublisherTests(unittest.TestCase):
             env.update(PATH=f"{folder}:{env['PATH']}", GIT_SHA="test-revision", AWS_REGION="us-east-1",
                        CONFIG_TOOL_TEST_LOG=str(log), CONFIG_TOOL_TEST_REGION=region)
             result = subprocess.run(["bash", str(ROOT / "scripts/publish-vocal-extractor-image.sh")],
-                                    env=env, text=True, capture_output=True)
+                                    env=env, cwd=folder, text=True, capture_output=True)
             commands = [json.loads(line) for line in log.read_text().splitlines()]
             return result, commands
 
@@ -153,7 +153,7 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         updates = [args for args in commands if args[:3] == ["pulumi", "config", "set"]]
         self.assertEqual(updates, [["pulumi", "config", "set", "image",
-                                  "123456789012.dkr.ecr.eu-central-1.amazonaws.com/audio@sha256:test-digest"]])
+                                  "123456789012.dkr.ecr.eu-central-1.amazonaws.com/audio@sha256:test-digest", "--stack", "dev"]])
         for args in commands:
             if args[0] == "aws":
                 self.assertEqual(args[args.index("--region") + 1], "eu-central-1")

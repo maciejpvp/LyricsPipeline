@@ -5,7 +5,10 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
-type Args struct{ Tags pulumi.StringMap }
+type Args struct {
+	ComponentType string
+	Tags          pulumi.StringMap
+}
 
 type Registry struct {
 	pulumi.ResourceState
@@ -14,7 +17,7 @@ type Registry struct {
 
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Registry, error) {
 	component := &Registry{}
-	if err := ctx.RegisterComponentResource("lyrics:registry:Registry", name, component, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(args.ComponentType, name, component, opts...); err != nil {
 		return nil, err
 	}
 	repository, err := awsecr.NewRepository(ctx, name+"-image", &awsecr.RepositoryArgs{

@@ -1,171 +1,150 @@
 # Infrastructure Rules
 
-These rules apply to all future Pulumi infrastructure changes in this repository.
+These rules apply to Pulumi infrastructure changes in this repository.
 
-## Keep this workload in one stack
+## Deployment belongs to the layer
 
-This repository deliberately retains one Pulumi project and stack per environment.
-The network, storage and worker currently share one owner and deployment lifecycle.
-The Go refactor does not migrate Pulumi state or introduce new component parents.
-Split stacks only as a separate, reviewed state migration when lifecycle or access
-requirements actually diverge; use stack references at those boundaries.
+All projects share the root Go module and use the same layout:
 
-## Name resource packages after AWS services
+| Directory / project | Owns |
+| --- | --- |
+| `infra/base` / `LyricsPipeline` | S3, separation queue/DLQ, queue permissions and the single bucket notification configuration |
+| `infra/separation` / `LyricsPipeline-Separation` | VPC/NAT, ECR, worker permissions, container definition, ECS and native scaling |
+| `infra/transcription` / `LyricsPipeline-Transcription` | Transcribe workflow, EventBridge, Lambda environments/permissions, error queue and monitoring |
+| `infra/contracts` | Versioned base outputs and their StackReference reader |
 
-`main` runs `deployment.Run`. Resource packages use the AWS service name so the
-provider is visible without opening the implementation. Cross-service orchestration
-packages use their responsibility name. All implementation packages live under `internal`:
+Every project owns `Pulumi.yaml`, stack configurations, `main.go`, `config.go` and
+`deployment.go`. The local `deploy(ctx)` loads configuration, validates location and
+dependencies, composes resources and exports outputs. Additional local files may
+separate policies, container documents, workflow definitions or cross-service wiring.
+Do not add a global deployment package or forwarding entrypoints.
+
+Both consumers reference only the base and verify its contract version, account and
+region. The layer passes the stack name explicitly to `contracts.Reference`; the contract
+reader must not read project configuration. Transcription must deploy without separation,
+ECS, VPC or NAT, and must not edit S3 notification configuration.
+
+Moving the base source directory does not change its project identity or require a state
+move. The earlier split from a monolithic state is a separate migration: identify the
+owner, back up both states and follow the README before moving resources. Never infer
+that AWS resources do not exist from an empty selected Pulumi state.
+
+## Reusable packages have narrow responsibilities
+
+`internal` packages provide service components or one specific infrastructure capability.
+They must not import `infra`, application runtime packages, or project configuration models.
+They accept their own typed parameters, concrete values, ARN/ID outputs and explicit
+readiness dependencies. They must not take whole components from another service.
 
 | Package | Responsibility |
 | --- | --- |
-| `config` | Typed effective Pulumi configuration, unit conversion and validation |
-| `deployment` | Location checks, dependency wiring and stack exports |
+| `config` | Strict JSON configuration decoding and generic boundary validation only |
+| `lambdabuild` | Compile a caller-selected Go program and create a reproducible ZIP |
+| `lambda` | Create a Lambda from a supplied artifact and AWS parameters |
+| `iam` | Create roles and attach explicitly supplied policies |
+| `ecs` | ECS definitions, clusters, capacity providers and services from explicit inputs |
 | `vpc` | VPC, subnets, gateways and routing |
 | `s3` | Private encrypted object storage |
-| `sqs` | Processing queue, retry settings and DLQ |
-| `ingestion` | Bucket-to-queue permission and object notifications |
-| `iam` | Worker roles, trust and data permissions |
-| `ecr` | Worker image repository |
-| `ecs` | ECS task definition, container, logs, cluster, capacity providers and service |
-| `autoscaling` | Scaling target, policies, metrics and alarms |
+| `sqs` | Queue, redrive configuration and DLQ |
+| `ecr` | Image repository |
+| `autoscaling` | Native queue-driven ECS scaling, metric math and alarms |
 
-Use value argument structs with `New(ctx, name, args Args, opts...)`. The `ecs`
-package has two explicit constructors: `NewTaskDefinition` with `TaskDefinitionArgs`
-and `NewService` with `ServiceArgs`, in separate files. Alias AWS SDK imports when
-the local package has the same name, for example `awss3` and `awsecs`.
+Application choices belong to layers: file-access policies, `MEDIA_BUCKET`, `QUEUE_URL`,
+object prefixes, worker container layout, `TRANSCRIPTION_ACTION`, event filters and
+Transcribe ASL. Cross-service composition, such as a bucket notification targeting a
+queue, also belongs to the owning layer. Do not introduce a universal resource factory,
+`utils` package or a transcription-specific infrastructure package under `internal`.
 
-Pass the specific typed outputs a consumer needs, plus explicit readiness dependencies,
-instead of whole components from other packages. Use short methods on private
-builders when a component has several creation steps. Small single-step
-constructors do not need an extra builder. Keep provider declarations explicit;
-do not introduce a generic resource factory or a catch-all utilities package.
+Use value argument structs and variadic `pulumi.ResourceOption` arguments. Alias AWS
+imports where needed, for example `awss3`, `awsecs`. Larger components may use small
+private builders. Small constructors do not need another builder or forwarding wrapper.
 
-## Use reusable components
+### Separate Lambda compilation from provisioning
 
-Wrap related resources in a `pulumi.ComponentResource` instead of creating raw cloud resources directly in the stack entrypoint. Components should:
+`lambdabuild.Build(ctx, args)` accepts module directory, entry package, output directory
+and Go architecture (`arm64` or `amd64`), and returns artifact path and architecture.
+It must not import Pulumi/AWS or know any application, stack, environment or function name.
+Archives contain an executable root `bootstrap` with deterministic ZIP metadata.
 
-- expose typed argument and output structs;
-- establish `pulumi.Parent(component)` for every child resource;
-- apply project-wide security and naming defaults;
-- register component outputs with `ctx.RegisterResourceOutputs`.
+Do not add a repository-keyed/global application build cache. The layer builds once and
+passes the artifact to each function; the Go toolchain handles compilation caching.
+`lambda` accepts artifact, runtime, handler, AWS architecture, role, log group, resources
+and environment. It does not compile programs, create business permissions or choose
+application environment values. AWS's AMD64 architecture name is `x86_64`; callers make
+that choice explicitly.
 
-The reusable object storage implementation is in `internal/s3/bucket.go`. Keep
-application-specific use cases, such as MP3 files, in the stack entrypoint or a
-higher-level domain component rather than in the generic storage component.
+## Preserve resource identity and readiness
 
-### Component implementation requirements
+Existing tokens, logical names and parents are compatibility metadata owned by the layer.
+Pass historical component tokens to reusable components rather than hardcoding application
+tokens inside them. Layers may register compatibility parents when their children span
+services. ECS task logs retain the `lyrics:image:Image` parent; service networking retains
+`lyrics:worker:Worker`; worker IAM resources retain `lyrics:iam:WorkerIAM`. Bucket
+notification and queue policy retain the queue component parent.
 
-Every reusable infrastructure group must follow the same shape:
+Grouped components embed `pulumi.ResourceState`, register before their children, set
+`pulumi.Parent` for children and register meaningful outputs. Single-resource constructors
+accept the caller's parent/options without adding another identity layer.
 
-- embed `pulumi.ResourceState` in the component output type;
-- accept typed arguments and variadic `pulumi.ResourceOption` values;
-- register the component before creating children;
-- pass `pulumi.Parent(component)` to every child resource;
-- register meaningful component outputs with `ctx.RegisterResourceOutputs`.
+Model readiness that IDs alone do not imply: notification after queue policy, NAT after
+internet gateway, and service after routing associations/routes, IAM attachments and cluster
+capacity providers. Keep the ECS service's `IgnoreChanges(["desiredCount"])`: native
+Application Auto Scaling owns desired count. Preserve Fargate Spot only, with no automatic
+On-Demand fallback.
 
-Keep logical names, component tokens and parents stable during code refactors.
-`ecs.TaskDefinition` retains the `lyrics:image:Image` token; `ecs.Service` retains
-`lyrics:worker:Worker`. `ingestion` is a wiring package, not an additional Pulumi
-component: its policy and notification retain
-the queue parent. Do not normalize historical tokens during unrelated cleanup.
+Do not recreate resources as a refactoring strategy. Keep force-cleanup behavior unchanged:
+this application explicitly enables it for S3, ECR and the ECS service. Storage stays private,
+encrypted and protected against public access. Prefer generated physical names/prefixes and
+tag resources where supported.
 
-Explicitly model readiness that cannot be inferred from IDs: notification after
-queue policy, NAT after internet gateway, and ECS service after route associations,
-internet/NAT routes and IAM policy attachments. The autoscaler owns desired count;
-retain `IgnoreChanges(["desiredCount"])` on the ECS service.
+## Serialize provider documents structurally
 
-## Serialize provider JSON structurally
+Use concrete document structs with `pulumi.JSONMarshal`, and the provider's typed IAM
+policy-document builder. Do not build JSON through string interpolation or dynamic
+`map[string]any` documents. Resolve dynamic fields with typed `pulumix.Apply` callbacks.
+Resolve the **complete** document to a top-level output before marshaling: unknown nested
+outputs inside ordinary structs cannot be serialized correctly in preview. Register
+resources outside apply callbacks so previews retain the full graph.
 
-Do not construct provider JSON using string interpolation or dynamic
-`map[string]any` documents. Use concrete document structs and `pulumi.JSONMarshal`.
-Use the provider's typed IAM policy-document builder for permission documents.
-Resolve dynamic inputs using `pulumix.Apply` / `Apply2` / `Apply4` callbacks with
-named, typed parameters. Do not use positional `pulumi.All` slices and assertions.
+Maps are appropriate for dynamic tags and SDK registration boundaries (`pulumi.Map`).
+Tests may inspect provider property maps and normalize semantically equivalent IAM JSON.
 
-`pulumi.JSONMarshal` cannot serialize unknown outputs nested inside an ordinary
-struct. Resolve the complete document to a top-level output before marshaling.
-Resources must be registered outside apply callbacks so preview can see the graph.
+## Configuration is owned and validated locally
 
-Maps remain appropriate for genuinely dynamic keys such as tags and for required
-SDK registration boundaries (`pulumi.Map`). Tests may inspect dynamic provider
-property maps at the SDK boundary.
+Every project's `Pulumi.yaml` contains its shared values, using native Pulumi `value:`
+wrappers for objects. `Pulumi.<stack>.yaml` contains only deliberate overrides, stack
+references and the published image. No application fallback values in Go and no production
+YAML parsing: read Pulumi's resolved configuration through its API.
 
-This rule applies to all Pulumi JSON fields, including IAM policies, SQS
-redrive and queue policies, and ECS container definitions. JSON used by the
-worker’s runtime protocol or by deployment configuration parsing is separate
-application data and is not affected by this infrastructure rule.
+Objects use native whole-key replacement, not deep merging. Require every field, including
+fields whose zero value is valid; reject missing, null and unknown fields. Wire structs,
+application validation and unit conversion belong to the layer. Resource settings types
+belong to their service. Use `time.Duration`, `netip.Prefix`, CPU units and MiB types where
+appropriate. Protocol constants and AWS constraints remain code concerns.
 
-## Decouple layers with stack references
+Base groups: `s3`, `sqs`. Separation: `vpc`, `ecs`, `autoscaling`, scalar `image`.
+Transcription: `transcription`. Each layer owns its name, region, tags and reference settings.
+Reject legacy `deployment`/`deploymentImage` keys; the historical migration helper is used
+only on the pre-split revision. Do not maintain runtime fallback precedence.
 
-When one layer needs an output from another layer, use `pulumi.StackReference`. Do not hardcode resource IDs, ARNs, or names from another stack.
+Validate configuration and actual provider location before registering resources. Keep
+Fargate size, network layout and timing checks. Never hardcode secrets; use encrypted Pulumi
+configuration and secret outputs when needed.
 
-```go
-ref, err := pulumi.NewStackReference(ctx, "org/01-base-network/prod", nil)
-if err != nil {
-    return err
-}
-vpcID := ref.GetStringOutput(pulumi.String("vpcId"))
-```
+## Verification and delivery
 
-## Use strongly typed configuration
-
-`Pulumi.yaml` is the single source of shared workload values. Use native project
-configuration (`value:` wrappers for objects). `Pulumi.<stack>.yaml` files contain
-only intentional overrides and deployment-specific values; do not copy project
-values into the development stack. Follow
-[Pulumi project configuration](https://www.pulumi.com/docs/iac/concepts/config/#project-level-configuration).
-
-Go owns types, unit conversions, validation and resource construction. It must not
-supply application fallback values or read YAML itself. Read the already resolved
-configuration through the official API. Require all settings and all fields in
-service objects, including valid zero-valued fields; report omissions explicitly.
-Do not reintroduce `Defaults()` or a second schema-key list alongside struct tags.
-
-Shared groups are `vpc`, `s3`, `ecs`, `sqs` and `autoscaling`, plus scalar `name`,
-`image`, `aws:region` and dynamic `tags`. Use distinct `CPUUnits`, `MemoryMiB`,
-`time.Duration` and `netip.Prefix` internally. The shared file also owns CIDRs,
-object prefixes, task lifecycle/health parameters and queue retention/polling.
-Protocol constants, units and AWS validation constraints remain code concerns.
-
-Project/stack inheritance is native Pulumi whole-key replacement, not a custom
-Go merge. A deliberate service override must contain the complete object. The
-published `image` is a separate scalar so publishing cannot replace the shared ECS
-settings. Empty `image` requests the existing provisioning-only bootstrap reference.
-
-Legacy `deployment` / `deploymentImage` keys produce a migration error. Use
-`scripts/migrate-pulumi-config.py` to preserve configured differences and unrelated
-stack metadata; require preview before deployment. Do not retain runtime fallback
-precedence between old and new formats.
-
-Resolve the effective provider region and availability zone before resources are
-registered. Reject unknown/null/missing fields, invalid Fargate resource pairs,
-invalid network layouts and out-of-range timings before creating resources. The
-Fargate resource table follows [AWS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html).
-
-Tests load `Pulumi.yaml` as their configuration source. Do not duplicate defaults
-in test helpers or require development settings to equal constants in Go. Test
-that valid edits are honored and missing settings are rejected. Resource snapshots
-remain an explicit compatibility baseline, not a runtime configuration source.
-
-Never hardcode secrets. Use `config.RequireSecret` or encrypted Pulumi configuration values for credentials, tokens, and passwords.
-
-## Resource naming and safety
-
-- Prefer Pulumi-generated names or prefixes. Avoid hardcoding globally unique cloud resource names.
-- Keep destructive options such as `ForceDestroy` disabled unless the requirement is explicit and documented. This stack explicitly enables force cleanup for its S3 bucket, ECR repository, and ECS service so teardown can remove stored objects, images, and service tasks.
-- Default storage resources to private access.
-- Add public-access blocking and ownership controls to S3 buckets unless a documented exception exists.
-- Tag resources with their purpose and ownership where the provider supports tags.
-
-## Delivery guardrails
-
-- Run `pulumi preview` for every infrastructure pull request.
-- Require review and successful checks before `pulumi up` on protected branches.
-- Run formatting and tests for every Go infrastructure change.
-- Preserve the single-stack exception above until a separate state migration is approved.
-- Compare resource identities, parents, inputs and retained dependencies against
-  `testdata/resource_graph.json`; do not regenerate that fixture to hide a difference.
-- A refactor preview must not create, delete or replace resources. IAM JSON may be
-  canonicalized by the provider, but effective permissions must remain unchanged.
-- If stack access is unavailable, report that real preview remains unverified;
-  mocked graph equality is not evidence of a successful cloud preview.
+- Capture current layer graphs before refactoring. Compare identities, parents, inputs,
+  dependency sets, `ignoreChanges` and stack exports afterward.
+- Keep layer fixtures in their own `testdata` directories. The original root 44-resource
+  fixture remains historical evidence; do not regenerate fixtures to conceal changes.
+- Keep application configuration/composition tests with their layer. Shared `configtest`
+  and `infratest` helpers must not contain application defaults or deployment composition.
+- Test the generic builder with multiple entry programs, both architectures, deterministic
+  executable archives, edited sources and failed builds.
+- Run Go tests, vet, appropriate race tests, script tests and previews of all projects.
+  Report whether previews used real stack state or an isolated backend with synthetic outputs.
+  Mock graph equality alone does not establish cloud behavior or migration safety.
+- No resource deletion/replacement is expected for this source refactor. Review provider
+  canonicalization separately from effective policy/container behavior.
+- Require review before applying protected deployments. Never run `pulumi up` or mutate
+  cloud state as part of this refactor's validation.

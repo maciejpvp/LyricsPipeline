@@ -1,0 +1,697 @@
+{
+  "exports": {
+    "clusterName": "vocal-extractor-cluster",
+    "repositoryUrl": "registry.example/vocal-extractor-image",
+    "serviceName": "vocal-extractor-service"
+  },
+  "resources": {
+    "aws:appautoscaling/policy:Policy::vocal-extractor-scale-in": {
+      "Type": "aws:appautoscaling/policy:Policy",
+      "Name": "vocal-extractor-scale-in",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling::vocal-extractor",
+      "Inputs": {
+        "policyType": "StepScaling",
+        "resourceId": "service/vocal-extractor-cluster/vocal-extractor-service",
+        "scalableDimension": "ecs:service:DesiredCount",
+        "serviceNamespace": "ecs",
+        "stepScalingPolicyConfiguration": {
+          "adjustmentType": "ExactCapacity",
+          "cooldown": 120,
+          "stepAdjustments": [
+            {
+              "metricIntervalUpperBound": "0",
+              "scalingAdjustment": 0
+            }
+          ]
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling$aws:appautoscaling/target:Target::vocal-extractor-scaling-target",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/service:Service::vocal-extractor-service"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:appautoscaling/policy:Policy::vocal-extractor-scale-out": {
+      "Type": "aws:appautoscaling/policy:Policy",
+      "Name": "vocal-extractor-scale-out",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling::vocal-extractor",
+      "Inputs": {
+        "policyType": "StepScaling",
+        "resourceId": "service/vocal-extractor-cluster/vocal-extractor-service",
+        "scalableDimension": "ecs:service:DesiredCount",
+        "serviceNamespace": "ecs",
+        "stepScalingPolicyConfiguration": {
+          "adjustmentType": "ChangeInCapacity",
+          "cooldown": 300,
+          "stepAdjustments": [
+            {
+              "metricIntervalLowerBound": "0",
+              "scalingAdjustment": 1
+            }
+          ]
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling$aws:appautoscaling/target:Target::vocal-extractor-scaling-target",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/service:Service::vocal-extractor-service"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:appautoscaling/target:Target::vocal-extractor-scaling-target": {
+      "Type": "aws:appautoscaling/target:Target",
+      "Name": "vocal-extractor-scaling-target",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling::vocal-extractor",
+      "Inputs": {
+        "maxCapacity": 2,
+        "minCapacity": 0,
+        "resourceId": "service/vocal-extractor-cluster/vocal-extractor-service",
+        "scalableDimension": "ecs:service:DesiredCount",
+        "serviceNamespace": "ecs"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/service:Service::vocal-extractor-service"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/logGroup:LogGroup::vocal-extractor-logs": {
+      "Type": "aws:cloudwatch/logGroup:LogGroup",
+      "Name": "vocal-extractor-logs",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:image:Image::vocal-extractor",
+      "Inputs": {
+        "namePrefix": "/ecs/vocal-extractor-",
+        "retentionInDays": 30,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::vocal-extractor-messages-empty": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "vocal-extractor-messages-empty",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling::vocal-extractor",
+      "Inputs": {
+        "alarmActions": [
+          "arn:aws:mock::123456789012:vocal-extractor-scale-in"
+        ],
+        "alarmDescription": "Scale in only when no SQS messages are visible or in flight",
+        "comparisonOperator": "LessThanOrEqualToThreshold",
+        "datapointsToAlarm": 5,
+        "evaluationPeriods": 5,
+        "metricQueries": [
+          {
+            "id": "visible",
+            "metric": {
+              "dimensions": {
+                "QueueName": "jobs"
+              },
+              "metricName": "ApproximateNumberOfMessagesVisible",
+              "namespace": "AWS/SQS",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "id": "in_flight",
+            "metric": {
+              "dimensions": {
+                "QueueName": "jobs"
+              },
+              "metricName": "ApproximateNumberOfMessagesNotVisible",
+              "namespace": "AWS/SQS",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "expression": "FILL(visible, 1) + FILL(in_flight, 1)",
+            "id": "total",
+            "label": "Visible and in-flight messages",
+            "returnData": true
+          }
+        ],
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling$aws:appautoscaling/policy:Policy::vocal-extractor-scale-in",
+        "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::vocal-extractor-messages-visible": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "vocal-extractor-messages-visible",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling::vocal-extractor",
+      "Inputs": {
+        "alarmActions": [
+          "arn:aws:mock::123456789012:vocal-extractor-scale-out"
+        ],
+        "alarmDescription": "Wake from zero or add one worker when waiting backlog per ready worker reaches the threshold; wait for desired capacity to be running",
+        "comparisonOperator": "GreaterThanOrEqualToThreshold",
+        "datapointsToAlarm": 1,
+        "evaluationPeriods": 1,
+        "metricQueries": [
+          {
+            "id": "visible",
+            "metric": {
+              "dimensions": {
+                "QueueName": "jobs"
+              },
+              "metricName": "ApproximateNumberOfMessagesVisible",
+              "namespace": "AWS/SQS",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "id": "in_flight",
+            "metric": {
+              "dimensions": {
+                "QueueName": "jobs"
+              },
+              "metricName": "ApproximateNumberOfMessagesNotVisible",
+              "namespace": "AWS/SQS",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "id": "desired",
+            "metric": {
+              "dimensions": {
+                "ClusterName": "vocal-extractor-cluster",
+                "ServiceName": "vocal-extractor-service"
+              },
+              "metricName": "DesiredTaskCount",
+              "namespace": "ECS/ContainerInsights",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "id": "running",
+            "metric": {
+              "dimensions": {
+                "ClusterName": "vocal-extractor-cluster",
+                "ServiceName": "vocal-extractor-service"
+              },
+              "metricName": "RunningTaskCount",
+              "namespace": "ECS/ContainerInsights",
+              "period": 60,
+              "stat": "Minimum"
+            },
+            "returnData": false
+          },
+          {
+            "id": "pending",
+            "metric": {
+              "dimensions": {
+                "ClusterName": "vocal-extractor-cluster",
+                "ServiceName": "vocal-extractor-service"
+              },
+              "metricName": "PendingTaskCount",
+              "namespace": "ECS/ContainerInsights",
+              "period": 60,
+              "stat": "Maximum"
+            },
+            "returnData": false
+          },
+          {
+            "expression": "IF((FILL(desired, 0) == 0) AND (FILL(running, 0) == 0) AND (FILL(pending, 0) == 0) AND (FILL(in_flight, 1) == 0), IF(FILL(visible, 0) \u003e 0, 5, 0), IF((FILL(running, 0) \u003e 0) AND (FILL(desired, 0) == FILL(running, 0)) AND (FILL(pending, 1) == 0), FILL(visible, 0) / running, 0))",
+            "id": "backlog_per_worker",
+            "label": "Waiting messages per ready worker, or wake-up demand",
+            "returnData": true
+          }
+        ],
+        "threshold": 5,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:autoscaling:Autoscaling$aws:appautoscaling/policy:Policy::vocal-extractor-scale-out",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/service:Service::vocal-extractor-service",
+        "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/eip:Eip::vocal-extractor-nat-eip": {
+      "Type": "aws:ec2/eip:Eip",
+      "Name": "vocal-extractor-nat-eip",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "domain": "vpc",
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:ec2/internetGateway:InternetGateway::vocal-extractor-igw": {
+      "Type": "aws:ec2/internetGateway:InternetGateway",
+      "Name": "vocal-extractor-igw",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/natGateway:NatGateway::vocal-extractor-nat": {
+      "Type": "aws:ec2/natGateway:NatGateway",
+      "Name": "vocal-extractor-nat",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "allocationId": "vocal-extractor-nat-eip-id",
+        "subnetId": "vocal-extractor-public-id",
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/eip:Eip::vocal-extractor-nat-eip",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/internetGateway:InternetGateway::vocal-extractor-igw",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/subnet:Subnet::vocal-extractor-public"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/route:Route::vocal-extractor-internet-route": {
+      "Type": "aws:ec2/route:Route",
+      "Name": "vocal-extractor-internet-route",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "destinationCidrBlock": "0.0.0.0/0",
+        "gatewayId": "vocal-extractor-igw-id",
+        "routeTableId": "vocal-extractor-public-routes-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/internetGateway:InternetGateway::vocal-extractor-igw",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTable:RouteTable::vocal-extractor-public-routes"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/route:Route::vocal-extractor-nat-route": {
+      "Type": "aws:ec2/route:Route",
+      "Name": "vocal-extractor-nat-route",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "destinationCidrBlock": "0.0.0.0/0",
+        "natGatewayId": "vocal-extractor-nat-id",
+        "routeTableId": "vocal-extractor-private-routes-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/natGateway:NatGateway::vocal-extractor-nat",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTable:RouteTable::vocal-extractor-private-routes"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/routeTable:RouteTable::vocal-extractor-private-routes": {
+      "Type": "aws:ec2/routeTable:RouteTable",
+      "Name": "vocal-extractor-private-routes",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/routeTable:RouteTable::vocal-extractor-public-routes": {
+      "Type": "aws:ec2/routeTable:RouteTable",
+      "Name": "vocal-extractor-public-routes",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/routeTableAssociation:RouteTableAssociation::vocal-extractor-private-association": {
+      "Type": "aws:ec2/routeTableAssociation:RouteTableAssociation",
+      "Name": "vocal-extractor-private-association",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "routeTableId": "vocal-extractor-private-routes-id",
+        "subnetId": "vocal-extractor-private-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTable:RouteTable::vocal-extractor-private-routes",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/subnet:Subnet::vocal-extractor-private"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/routeTableAssociation:RouteTableAssociation::vocal-extractor-public-association": {
+      "Type": "aws:ec2/routeTableAssociation:RouteTableAssociation",
+      "Name": "vocal-extractor-public-association",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "routeTableId": "vocal-extractor-public-routes-id",
+        "subnetId": "vocal-extractor-public-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTable:RouteTable::vocal-extractor-public-routes",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/subnet:Subnet::vocal-extractor-public"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/securityGroup:SecurityGroup::vocal-extractor-tasks": {
+      "Type": "aws:ec2/securityGroup:SecurityGroup",
+      "Name": "vocal-extractor-tasks",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker::vocal-extractor",
+      "Inputs": {
+        "description": "Fargate worker egress",
+        "egress": [
+          {
+            "cidrBlocks": [
+              "0.0.0.0/0"
+            ],
+            "fromPort": 0,
+            "protocol": "-1",
+            "toPort": 0
+          }
+        ],
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/subnet:Subnet::vocal-extractor-private": {
+      "Type": "aws:ec2/subnet:Subnet",
+      "Name": "vocal-extractor-private",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "availabilityZone": "eu-central-1a",
+        "cidrBlock": "10.42.2.0/24",
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/subnet:Subnet::vocal-extractor-public": {
+      "Type": "aws:ec2/subnet:Subnet",
+      "Name": "vocal-extractor-public",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "availabilityZone": "eu-central-1a",
+        "cidrBlock": "10.42.1.0/24",
+        "mapPublicIpOnLaunch": true,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "vpcId": "vocal-extractor-vpc-id"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/vpc:Vpc::vocal-extractor-vpc"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ec2/vpc:Vpc::vocal-extractor-vpc": {
+      "Type": "aws:ec2/vpc:Vpc",
+      "Name": "vocal-extractor-vpc",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network::vocal-extractor",
+      "Inputs": {
+        "cidrBlock": "10.42.0.0/16",
+        "enableDnsHostnames": true,
+        "enableDnsSupport": true,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:ecr/repository:Repository::vocal-extractor-image": {
+      "Type": "aws:ecr/repository:Repository",
+      "Name": "vocal-extractor-image",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:registry:Registry::vocal-extractor",
+      "Inputs": {
+        "forceDelete": true,
+        "imageScanningConfiguration": {
+          "scanOnPush": true
+        },
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:ecs/cluster:Cluster::vocal-extractor-cluster": {
+      "Type": "aws:ecs/cluster:Cluster",
+      "Name": "vocal-extractor-cluster",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker::vocal-extractor",
+      "Inputs": {
+        "settings": [
+          {
+            "name": "containerInsights",
+            "value": "enabled"
+          }
+        ],
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:ecs/clusterCapacityProviders:ClusterCapacityProviders::vocal-extractor-capacity-providers": {
+      "Type": "aws:ecs/clusterCapacityProviders:ClusterCapacityProviders",
+      "Name": "vocal-extractor-capacity-providers",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker::vocal-extractor",
+      "Inputs": {
+        "capacityProviders": [
+          "FARGATE_SPOT"
+        ],
+        "clusterName": "vocal-extractor-cluster"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:ecs/service:Service::vocal-extractor-service": {
+      "Type": "aws:ecs/service:Service",
+      "Name": "vocal-extractor-service",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker::vocal-extractor",
+      "Inputs": {
+        "capacityProviderStrategies": [
+          {
+            "base": 0,
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 1
+          }
+        ],
+        "cluster": "arn:aws:mock::123456789012:vocal-extractor-cluster",
+        "desiredCount": 0,
+        "forceDelete": true,
+        "forceNewDeployment": true,
+        "networkConfiguration": {
+          "assignPublicIp": false,
+          "securityGroups": [
+            "vocal-extractor-tasks-id"
+          ],
+          "subnets": [
+            "vocal-extractor-private-id"
+          ]
+        },
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "taskDefinition": "arn:aws:mock::123456789012:vocal-extractor-task",
+        "triggers": {
+          "capacityProvider": "FARGATE_SPOT"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/rolePolicy:RolePolicy::vocal-extractor-task-policy",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/rolePolicyAttachment:RolePolicyAttachment::vocal-extractor-execution-policy",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:image:Image$aws:ecs/taskDefinition:TaskDefinition::vocal-extractor-task",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/route:Route::vocal-extractor-internet-route",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/route:Route::vocal-extractor-nat-route",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTableAssociation:RouteTableAssociation::vocal-extractor-private-association",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/routeTableAssociation:RouteTableAssociation::vocal-extractor-public-association",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:network:Network$aws:ec2/subnet:Subnet::vocal-extractor-private",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ec2/securityGroup:SecurityGroup::vocal-extractor-tasks",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/cluster:Cluster::vocal-extractor-cluster",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:worker:Worker$aws:ecs/clusterCapacityProviders:ClusterCapacityProviders::vocal-extractor-capacity-providers",
+        "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": [
+        "desiredCount"
+      ]
+    },
+    "aws:ecs/taskDefinition:TaskDefinition::vocal-extractor-task": {
+      "Type": "aws:ecs/taskDefinition:TaskDefinition",
+      "Name": "vocal-extractor-task",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:image:Image::vocal-extractor",
+      "Inputs": {
+        "containerDefinitions": "[{\"name\":\"worker\",\"image\":\"registry.example/vocal-extractor-image:bootstrap\",\"essential\":true,\"stopTimeout\":120,\"healthCheck\":{\"command\":[\"CMD-SHELL\",\"python healthcheck.py\"],\"interval\":60,\"timeout\":5,\"retries\":3,\"startPeriod\":120},\"environment\":[{\"name\":\"AWS_REGION\",\"value\":\"eu-central-1\"},{\"name\":\"MEDIA_BUCKET\",\"value\":\"media\"},{\"name\":\"QUEUE_URL\",\"value\":\"https://sqs.example/jobs\"},{\"name\":\"INPUT_PREFIX\",\"value\":\"uploads/audio\"},{\"name\":\"OUTPUT_PREFIX\",\"value\":\"results/stems\"}],\"logConfiguration\":{\"logDriver\":\"awslogs\",\"options\":{\"awslogs-group\":\"vocal-extractor-logs\",\"awslogs-region\":\"eu-central-1\",\"awslogs-stream-prefix\":\"worker\"}}}]",
+        "cpu": "2048",
+        "executionRoleArn": "arn:aws:mock::123456789012:vocal-extractor-execution-role",
+        "family": "vocal-extractor",
+        "memory": "8192",
+        "networkMode": "awsvpc",
+        "requiresCompatibilities": [
+          "FARGATE"
+        ],
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "taskRoleArn": "arn:aws:mock::123456789012:vocal-extractor-task-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/role:Role::vocal-extractor-execution-role",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/role:Role::vocal-extractor-task-role",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:image:Image$aws:cloudwatch/logGroup:LogGroup::vocal-extractor-logs",
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:registry:Registry$aws:ecr/repository:Repository::vocal-extractor-image",
+        "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::vocal-extractor-execution-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "vocal-extractor-execution-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM::vocal-extractor",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"ecs-tasks.amazonaws.com\"]}}]}",
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::vocal-extractor-task-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "vocal-extractor-task-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM::vocal-extractor",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"ecs-tasks.amazonaws.com\"]}}]}",
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::vocal-extractor-task-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "vocal-extractor-task-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM::vocal-extractor",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::media\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::media/uploads/audio/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"sqs:ReceiveMessage\",\"sqs:DeleteMessage\",\"sqs:ChangeMessageVisibility\",\"sqs:GetQueueAttributes\"],\"Resource\":[\"arn:aws:sqs:eu-central-1:123456789012:jobs\"]}]}",
+        "role": "vocal-extractor-task-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/role:Role::vocal-extractor-task-role",
+        "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicyAttachment:RolePolicyAttachment::vocal-extractor-execution-policy": {
+      "Type": "aws:iam/rolePolicyAttachment:RolePolicyAttachment",
+      "Name": "vocal-extractor-execution-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM::vocal-extractor",
+      "Inputs": {
+        "policyArn": "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+        "role": "vocal-extractor-execution-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Separation::lyrics:iam:WorkerIAM$aws:iam/role:Role::vocal-extractor-execution-role"
+      ],
+      "IgnoreChanges": null
+    },
+    "lyrics:autoscaling:Autoscaling::vocal-extractor": {
+      "Type": "lyrics:autoscaling:Autoscaling",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:iam:WorkerIAM::vocal-extractor": {
+      "Type": "lyrics:iam:WorkerIAM",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:image:Image::vocal-extractor": {
+      "Type": "lyrics:image:Image",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:network:Network::vocal-extractor": {
+      "Type": "lyrics:network:Network",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:registry:Registry::vocal-extractor": {
+      "Type": "lyrics:registry:Registry",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:worker:Worker::vocal-extractor": {
+      "Type": "lyrics:worker:Worker",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Separation::pulumi:pulumi:Stack::LyricsPipeline-Separation-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "pulumi:pulumi:StackReference::org/LyricsPipeline/dev": {
+      "Type": "pulumi:pulumi:StackReference",
+      "Name": "org/LyricsPipeline/dev",
+      "Parent": "",
+      "Inputs": {
+        "name": "org/LyricsPipeline/dev"
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    }
+  }
+}

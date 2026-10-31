@@ -1,0 +1,565 @@
+{
+  "exports": {
+    "accountId": "123456789012",
+    "deadLetterQueueUrl": "https://sqs.example/lyrics-transcription-errors",
+    "mediaBucket": "media",
+    "outputPrefix": "results/stems",
+    "region": "eu-central-1",
+    "stateMachineArn": "arn:aws:mock::123456789012:lyrics-transcription-workflow"
+  },
+  "resources": {
+    "aws:cloudwatch/eventRule:EventRule::lyrics-transcription-vocals-created": {
+      "Type": "aws:cloudwatch/eventRule:EventRule",
+      "Name": "lyrics-transcription-vocals-created",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "eventPattern": "{\"source\":[\"aws.s3\"],\"detail-type\":[\"Object Created\"],\"detail\":{\"bucket\":{\"name\":[\"media\"]},\"object\":{\"key\":[{\"wildcard\":\"results/stems/*/vocals.wav\"}]}}}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/eventRule:EventRule::lyrics-transcription-workflow-failed": {
+      "Type": "aws:cloudwatch/eventRule:EventRule",
+      "Name": "lyrics-transcription-workflow-failed",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "eventPattern": "{\"source\":[\"aws.states\"],\"detail-type\":[\"Step Functions Execution Status Change\"],\"detail\":{\"stateMachineArn\":[\"arn:aws:mock::123456789012:lyrics-transcription-workflow\"],\"status\":[\"FAILED\",\"TIMED_OUT\",\"ABORTED\"]}}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/eventTarget:EventTarget::lyrics-transcription-failure": {
+      "Type": "aws:cloudwatch/eventTarget:EventTarget",
+      "Name": "lyrics-transcription-failure",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "arn": "arn:aws:mock::123456789012:lyrics-transcription-errors",
+        "deadLetterConfig": {
+          "arn": "arn:aws:mock::123456789012:lyrics-transcription-errors"
+        },
+        "retryPolicy": {
+          "maximumEventAgeInSeconds": 86400,
+          "maximumRetryAttempts": 185
+        },
+        "rule": "lyrics-transcription-workflow-failed"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/eventRule:EventRule::lyrics-transcription-workflow-failed",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queue:Queue::lyrics-transcription-errors",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queuePolicy:QueuePolicy::lyrics-transcription-errors-policy"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/eventTarget:EventTarget::lyrics-transcription-start": {
+      "Type": "aws:cloudwatch/eventTarget:EventTarget",
+      "Name": "lyrics-transcription-start",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "arn": "arn:aws:mock::123456789012:lyrics-transcription-workflow",
+        "deadLetterConfig": {
+          "arn": "arn:aws:mock::123456789012:lyrics-transcription-errors"
+        },
+        "retryPolicy": {
+          "maximumEventAgeInSeconds": 86400,
+          "maximumRetryAttempts": 185
+        },
+        "roleArn": "arn:aws:mock::123456789012:lyrics-transcription-event-role",
+        "rule": "lyrics-transcription-vocals-created"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/eventRule:EventRule::lyrics-transcription-vocals-created",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-event-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/rolePolicy:RolePolicy::lyrics-transcription-event-policy",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queue:Queue::lyrics-transcription-errors",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queuePolicy:QueuePolicy::lyrics-transcription-errors-policy"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-finalize-logs": {
+      "Type": "aws:cloudwatch/logGroup:LogGroup",
+      "Name": "lyrics-transcription-finalize-logs",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "namePrefix": "/aws/lambda/lyrics-transcription-finalize-",
+        "retentionInDays": 30,
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-prepare-logs": {
+      "Type": "aws:cloudwatch/logGroup:LogGroup",
+      "Name": "lyrics-transcription-prepare-logs",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "namePrefix": "/aws/lambda/lyrics-transcription-prepare-",
+        "retentionInDays": 30,
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-finalize-errors": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-finalize-errors",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "FunctionName": "lyrics-transcription-finalize"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "Errors",
+        "namespace": "AWS/Lambda",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-finalize"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-prepare-errors": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-prepare-errors",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "FunctionName": "lyrics-transcription-prepare"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "Errors",
+        "namespace": "AWS/Lambda",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-prepare"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-queued-errors": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-queued-errors",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "QueueName": "lyrics-transcription-errors"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "ApproximateNumberOfMessagesVisible",
+        "namespace": "AWS/SQS",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queue:Queue::lyrics-transcription-errors"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-workflow-aborted": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-workflow-aborted",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "StateMachineArn": "arn:aws:mock::123456789012:lyrics-transcription-workflow"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "ExecutionsAborted",
+        "namespace": "AWS/States",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-workflow-failed": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-workflow-failed",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "StateMachineArn": "arn:aws:mock::123456789012:lyrics-transcription-workflow"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "ExecutionsFailed",
+        "namespace": "AWS/States",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:cloudwatch/metricAlarm:MetricAlarm::lyrics-transcription-workflow-timeout": {
+      "Type": "aws:cloudwatch/metricAlarm:MetricAlarm",
+      "Name": "lyrics-transcription-workflow-timeout",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "comparisonOperator": "GreaterThanThreshold",
+        "dimensions": {
+          "StateMachineArn": "arn:aws:mock::123456789012:lyrics-transcription-workflow"
+        },
+        "evaluationPeriods": 1,
+        "metricName": "ExecutionsTimedOut",
+        "namespace": "AWS/States",
+        "period": 60,
+        "statistic": "Sum",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "threshold": 0,
+        "treatMissingData": "notBreaching"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::lyrics-transcription-event-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "lyrics-transcription-event-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"events.amazonaws.com\"]},\"Condition\":{\"ArnLike\":{\"aws:SourceArn\":[\"arn:aws:mock::123456789012:lyrics-transcription-vocals-created\"]},\"StringEquals\":{\"aws:SourceAccount\":[\"123456789012\"]}}}]}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/eventRule:EventRule::lyrics-transcription-vocals-created"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::lyrics-transcription-finalize-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "lyrics-transcription-finalize-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"lambda.amazonaws.com\"]}}]}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::lyrics-transcription-prepare-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "lyrics-transcription-prepare-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"lambda.amazonaws.com\"]}}]}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::lyrics-transcription-transcribe-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "lyrics-transcription-transcribe-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"transcribe.amazonaws.com\"]},\"Condition\":{\"ArnLike\":{\"aws:SourceArn\":[\"arn:aws:transcribe:eu-central-1:123456789012:*\"]},\"StringEquals\":{\"aws:SourceAccount\":[\"123456789012\"]}}}]}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/role:Role::lyrics-transcription-workflow-role": {
+      "Type": "aws:iam/role:Role",
+      "Name": "lyrics-transcription-workflow-role",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"states.amazonaws.com\"]},\"Condition\":{\"ArnLike\":{\"aws:SourceArn\":[\"arn:aws:states:eu-central-1:123456789012:stateMachine:*\"]},\"StringEquals\":{\"aws:SourceAccount\":[\"123456789012\"]}}}]}",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::lyrics-transcription-event-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "lyrics-transcription-event-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"states:StartExecution\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-workflow\"]}]}",
+        "role": "lyrics-transcription-event-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-event-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::lyrics-transcription-finalize-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "lyrics-transcription-finalize-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::media\"],\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"results/stems/*/transcription/*\"]}}},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/vocals.wav\",\"arn:aws:s3:::media/results/stems/*/transcription/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/transcription/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-finalize-logs:*\"]}]}",
+        "role": "lyrics-transcription-finalize-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-finalize-logs",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-finalize-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::lyrics-transcription-prepare-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "lyrics-transcription-prepare-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::media\"],\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"results/stems/*/transcription/*\"]}}},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/vocals.wav\",\"arn:aws:s3:::media/results/stems/*/transcription/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/transcription/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-prepare-logs:*\"]}]}",
+        "role": "lyrics-transcription-prepare-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-prepare-logs",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-prepare-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::lyrics-transcription-transcribe-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "lyrics-transcription-transcribe-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/vocals.wav\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/transcription/runs/*/raw.json\"]}]}",
+        "role": "lyrics-transcription-transcribe-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-transcribe-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:iam/rolePolicy:RolePolicy::lyrics-transcription-workflow-policy": {
+      "Type": "aws:iam/rolePolicy:RolePolicy",
+      "Name": "lyrics-transcription-workflow-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-prepare\",\"arn:aws:mock::123456789012:lyrics-transcription-finalize\"]},{\"Effect\":\"Allow\",\"Action\":[\"transcribe:StartTranscriptionJob\"],\"Resource\":[\"*\"],\"Condition\":{\"StringEquals\":{\"transcribe:OutputBucketName\":[\"media\"]},\"StringLike\":{\"transcribe:OutputKey\":[\"results/stems/*/transcription/runs/*/raw.json\"]}}},{\"Effect\":\"Allow\",\"Action\":[\"transcribe:GetTranscriptionJob\"],\"Resource\":[\"arn:aws:transcribe:eu-central-1:123456789012:transcription-job/lyrics-*\"]},{\"Effect\":\"Allow\",\"Action\":[\"iam:PassRole\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-transcribe-role\"],\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":[\"transcribe.amazonaws.com\"]}}},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/vocals.wav\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::media/results/stems/*/transcription/runs/*/raw.json\"]}]}",
+        "role": "lyrics-transcription-workflow-role"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-transcribe-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-workflow-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-finalize",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-prepare",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:lambda/function:Function::lyrics-transcription-finalize": {
+      "Type": "aws:lambda/function:Function",
+      "Name": "lyrics-transcription-finalize",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "architectures": [
+          "arm64"
+        ],
+        "code": {
+          "4dabf18193072939515e22adb298388d": "0def7320c3a5731c473e5ecbe6d01bc7",
+          "path": "/home/maciek/Documents/GitHub/LyricsPipeline/bin/transcription/lambda.zip"
+        },
+        "environment": {
+          "variables": {
+            "ACCOUNT_ID": "123456789012",
+            "LANGUAGE": "en-US",
+            "MEDIA_BUCKET": "media",
+            "OUTPUT_PREFIX": "results/stems",
+            "PIPELINE_VERSION": "1",
+            "TRANSCRIPTION_ACTION": "finalize"
+          }
+        },
+        "handler": "bootstrap",
+        "loggingConfig": {
+          "logFormat": "Text",
+          "logGroup": "lyrics-transcription-finalize-logs"
+        },
+        "memorySize": 256,
+        "role": "arn:aws:mock::123456789012:lyrics-transcription-finalize-role",
+        "runtime": "provided.al2023",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "timeout": 60
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-finalize-logs",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-finalize-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/rolePolicy:RolePolicy::lyrics-transcription-finalize-policy",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:lambda/function:Function::lyrics-transcription-prepare": {
+      "Type": "aws:lambda/function:Function",
+      "Name": "lyrics-transcription-prepare",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "architectures": [
+          "arm64"
+        ],
+        "code": {
+          "4dabf18193072939515e22adb298388d": "0def7320c3a5731c473e5ecbe6d01bc7",
+          "path": "/home/maciek/Documents/GitHub/LyricsPipeline/bin/transcription/lambda.zip"
+        },
+        "environment": {
+          "variables": {
+            "ACCOUNT_ID": "123456789012",
+            "LANGUAGE": "en-US",
+            "MEDIA_BUCKET": "media",
+            "OUTPUT_PREFIX": "results/stems",
+            "PIPELINE_VERSION": "1",
+            "TRANSCRIPTION_ACTION": "prepare"
+          }
+        },
+        "handler": "bootstrap",
+        "loggingConfig": {
+          "logFormat": "Text",
+          "logGroup": "lyrics-transcription-prepare-logs"
+        },
+        "memorySize": 256,
+        "role": "arn:aws:mock::123456789012:lyrics-transcription-prepare-role",
+        "runtime": "provided.al2023",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "timeout": 60
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/logGroup:LogGroup::lyrics-transcription-prepare-logs",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-prepare-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/rolePolicy:RolePolicy::lyrics-transcription-prepare-policy",
+        "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:StackReference::org/LyricsPipeline/dev"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:sfn/stateMachine:StateMachine::lyrics-transcription-workflow": {
+      "Type": "aws:sfn/stateMachine:StateMachine",
+      "Name": "lyrics-transcription-workflow",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "definition": "{\"StartAt\":\"Prepare\",\"TimeoutSeconds\":21600,\"States\":{\"AlreadyComplete\":{\"Type\":\"Succeed\"},\"Cached\":{\"Type\":\"Choice\",\"Choices\":[{\"Variable\":\"$.cached\",\"BooleanEquals\":true,\"Next\":\"AlreadyComplete\"}],\"Default\":\"StartTranscription\"},\"Finalize\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke\",\"Parameters\":{\"FunctionName\":\"arn:aws:mock::123456789012:lyrics-transcription-finalize\",\"Payload.$\":\"$\"},\"OutputPath\":\"$.Payload\",\"End\":true,\"Retry\":[{\"ErrorEquals\":[\"Lambda.ServiceException\",\"Lambda.AWSLambdaException\",\"Lambda.SdkClientException\",\"Lambda.TooManyRequestsException\",\"TransientError\"],\"IntervalSeconds\":2,\"MaxAttempts\":5,\"BackoffRate\":2}]},\"GetTranscription\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob\",\"Parameters\":{\"TranscriptionJobName.$\":\"$.job_name\"},\"ResultPath\":\"$.transcribe\",\"Next\":\"Status\",\"Retry\":[{\"ErrorEquals\":[\"Transcribe.InternalFailureException\",\"Transcribe.LimitExceededException\",\"Transcribe.ThrottlingException\"],\"IntervalSeconds\":2,\"MaxAttempts\":5,\"BackoffRate\":2}]},\"Prepare\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke\",\"Parameters\":{\"FunctionName\":\"arn:aws:mock::123456789012:lyrics-transcription-prepare\",\"Payload.$\":\"$\"},\"OutputPath\":\"$.Payload\",\"Next\":\"Cached\",\"Retry\":[{\"ErrorEquals\":[\"Lambda.ServiceException\",\"Lambda.AWSLambdaException\",\"Lambda.SdkClientException\",\"Lambda.TooManyRequestsException\",\"TransientError\"],\"IntervalSeconds\":2,\"MaxAttempts\":5,\"BackoffRate\":2}]},\"StartTranscription\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob\",\"Parameters\":{\"TranscriptionJobName.$\":\"$.job_name\",\"LanguageCode\":\"en-US\",\"MediaFormat\":\"wav\",\"Media\":{\"MediaFileUri.$\":\"$.media_uri\"},\"OutputBucketName.$\":\"$.bucket\",\"OutputKey.$\":\"$.raw_key\",\"JobExecutionSettings\":{\"AllowDeferredExecution\":true,\"DataAccessRoleArn\":\"arn:aws:mock::123456789012:lyrics-transcription-transcribe-role\"}},\"ResultPath\":\"$.transcribe\",\"Next\":\"Wait\",\"Retry\":[{\"ErrorEquals\":[\"Transcribe.InternalFailureException\",\"Transcribe.LimitExceededException\",\"Transcribe.ThrottlingException\"],\"IntervalSeconds\":2,\"MaxAttempts\":5,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"Transcribe.ConflictException\"],\"ResultPath\":\"$.start_error\",\"Next\":\"GetTranscription\"}]},\"Status\":{\"Type\":\"Choice\",\"Choices\":[{\"Variable\":\"$.transcribe.TranscriptionJob.TranscriptionJobStatus\",\"StringEquals\":\"COMPLETED\",\"Next\":\"Finalize\"},{\"Variable\":\"$.transcribe.TranscriptionJob.TranscriptionJobStatus\",\"StringEquals\":\"FAILED\",\"Next\":\"TranscriptionFailed\"}],\"Default\":\"Wait\"},\"TranscriptionFailed\":{\"Type\":\"Fail\",\"Error\":\"TranscriptionFailed\",\"CausePath\":\"$.transcribe.TranscriptionJob.FailureReason\"},\"Wait\":{\"Type\":\"Wait\",\"Next\":\"GetTranscription\",\"Seconds\":60}}}",
+        "roleArn": "arn:aws:mock::123456789012:lyrics-transcription-workflow-role",
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        },
+        "type": "STANDARD"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-transcribe-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/role:Role::lyrics-transcription-workflow-role",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/rolePolicy:RolePolicy::lyrics-transcription-transcribe-policy",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:iam/rolePolicy:RolePolicy::lyrics-transcription-workflow-policy",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-finalize",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:lambda/function:Function::lyrics-transcription-prepare"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:sqs/queue:Queue::lyrics-transcription-errors": {
+      "Type": "aws:sqs/queue:Queue",
+      "Name": "lyrics-transcription-errors",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "messageRetentionSeconds": 1209600,
+        "sqsManagedSseEnabled": true,
+        "tags": {
+          "Purpose": "lyrics-transcription"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:sqs/queuePolicy:QueuePolicy::lyrics-transcription-errors-policy": {
+      "Type": "aws:sqs/queuePolicy:QueuePolicy",
+      "Name": "lyrics-transcription-errors-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription::lyrics-transcription",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sqs:SendMessage\"],\"Resource\":[\"arn:aws:mock::123456789012:lyrics-transcription-errors\"],\"Principal\":{\"Service\":[\"events.amazonaws.com\"]},\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":[\"arn:aws:mock::123456789012:lyrics-transcription-vocals-created\",\"arn:aws:mock::123456789012:lyrics-transcription-workflow-failed\"]}}}]}",
+        "queueUrl": "https://sqs.example/lyrics-transcription-errors"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/eventRule:EventRule::lyrics-transcription-vocals-created",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:cloudwatch/eventRule:EventRule::lyrics-transcription-workflow-failed",
+        "urn:pulumi:test::LyricsPipeline-Transcription::lyrics:transcription:Transcription$aws:sqs/queue:Queue::lyrics-transcription-errors"
+      ],
+      "IgnoreChanges": null
+    },
+    "lyrics:transcription:Transcription::lyrics-transcription": {
+      "Type": "lyrics:transcription:Transcription",
+      "Name": "lyrics-transcription",
+      "Parent": "urn:pulumi:test::LyricsPipeline-Transcription::pulumi:pulumi:Stack::LyricsPipeline-Transcription-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "pulumi:pulumi:StackReference::org/LyricsPipeline/dev": {
+      "Type": "pulumi:pulumi:StackReference",
+      "Name": "org/LyricsPipeline/dev",
+      "Parent": "",
+      "Inputs": {
+        "name": "org/LyricsPipeline/dev"
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    }
+  }
+}

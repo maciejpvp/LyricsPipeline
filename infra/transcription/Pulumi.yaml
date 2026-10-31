@@ -1,0 +1,25 @@
+name: LyricsPipeline-Transcription
+description: Serverless English word-level transcription for karaoke
+runtime: go
+config:
+  aws:region: eu-central-1
+  name: lyrics-transcription
+  baseStack:
+    type: string
+  tags:
+    value:
+      Purpose: lyrics-transcription
+  transcription:
+    value:
+      language: en-US
+      pipelineVersion: "1"
+      pollSeconds: 60
+      timeoutSeconds: 21600
+      retryAttempts: 5
+      retryIntervalSeconds: 2
+      lambdaTimeoutSeconds: 60
+      lambdaMemoryMiB: 256
+      logRetentionDays: 30
+      deadLetterRetentionDays: 14
+      eventMaxAgeSeconds: 86400
+      eventRetryAttempts: 185

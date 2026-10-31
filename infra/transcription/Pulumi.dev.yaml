@@ -1,0 +1,2 @@
+config:
+  LyricsPipeline-Transcription:baseStack: maciejpvp/LyricsPipeline/dev

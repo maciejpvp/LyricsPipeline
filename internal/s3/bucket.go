@@ -6,7 +6,8 @@ import (
 )
 
 type Args struct {
-	Tags pulumi.StringMap
+	ComponentType string
+	Tags          pulumi.StringMap
 }
 
 type Storage struct {
@@ -19,7 +20,7 @@ type Storage struct {
 
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Storage, error) {
 	component := &Storage{}
-	if err := ctx.RegisterComponentResource("custom:storage:Storage", name, component, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(args.ComponentType, name, component, opts...); err != nil {
 		return nil, err
 	}
 

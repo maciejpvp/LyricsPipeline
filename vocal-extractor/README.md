@@ -36,25 +36,30 @@ The compose file expects an AWS-compatible SQS endpoint or a real queue; it does
 
 ## Deployment
 
-The Pulumi stack creates the media bucket, SQS queue/DLQ, S3 notification, IAM roles, ECR repository, VPC/NAT networking, ECS Fargate service, logs, and queue-depth scaling.
+`infra/base` owns S3 and the input SQS queue/DLQ. `infra/separation` owns VPC/NAT,
+IAM, ECR, ECS and native autoscaling, and consumes the base through StackReference.
+See the [repository deployment/migration instructions](../README.md).
 
-Infrastructure settings are stored as one typed JSON object in Pulumi configuration rather than as individual environment variables. Set `minTasks` and `maxTasks` to control the autoscaling floor and ceiling, `backlogPerWorker` for waiting jobs per ready worker (default 5), `scaleOutCooldownSeconds` for the shared scale-out cooldown (default 300), `idleMinutes` for the idle window, and `maxReceiveCount` for retry deliveries. Both new scaling settings must be positive integers; omitted fields receive defaults in existing stacks. The following initializes a new stack; for an existing stack use the preserving migration in the repository README:
+Shared separation settings live in `infra/separation/Pulumi.yaml`; complete stack
+object overrides are native Pulumi whole-key replacements. Missing fields are errors.
+The image is a separate scalar, so publishing never overwrites ECS resource settings.
 
-```bash
-# Select the intended existing stack. Shared values come from Pulumi.yaml.
-pulumi stack select <stack>
-pulumi preview
-pulumi up
-```
-
-The first `pulumi up` can omit `image`; Pulumi uses an ECR `:bootstrap` reference to create the task definition. From the repository root, build and publish the worker separately from the infrastructure:
+From the repository root, after provisioning separation's ECR repository:
 
 ```bash
-./scripts/publish-vocal-extractor-image.sh
-pulumi up
+./scripts/publish-vocal-extractor-image.sh dev
+pulumi -C infra/separation preview --stack dev --diff
+pulumi -C infra/separation up --stack dev
 ```
 
-The script builds only `./vocal-extractor`, pushes a Git-based tag to the ECR repository created by Pulumi, resolves the immutable image digest, and stores it in the Pulumi `image` setting. It does not modify or rebuild the rest of the application. AWS credentials can use the normal AWS profile/environment configuration. The publisher reads the region from the selected stack's `aws:region` setting, matching the provider and worker.
+The script builds only `vocal-extractor`, pushes a Git-based tag, resolves its digest,
+and updates `image` in the explicit separation stack. Empty image selects the
+provisioning-only `:bootstrap` reference; processing requires a published real image.
+The provider, worker and publisher use the separation project's configured region.
+
+Writing `output/{job_id}/vocals.wav` also triggers the independently deployed
+[transcription layer](../transcription/README.md), before the extraction manifest.
+It produces `output/{job_id}/transcription/transcript.json`. Use immutable job IDs.
 
 ## Tests
 

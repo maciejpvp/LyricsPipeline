@@ -1,0 +1,2 @@
+# Local helper scripts only; Lambda code and dependencies are built with Go.
+boto3>=1.40.34,<2

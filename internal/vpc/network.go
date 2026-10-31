@@ -2,14 +2,13 @@
 package vpc
 
 import (
-	"LyricsPipeline/internal/config"
-
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/ec2"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
 type Args struct {
-	Settings         config.Network
+	ComponentType    string
+	Settings         Settings
 	AvailabilityZone string
 	Tags             pulumi.StringMap
 }
@@ -36,7 +35,7 @@ type builder struct {
 
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Network, error) {
 	component := &Network{}
-	if err := ctx.RegisterComponentResource("lyrics:network:Network", name, component, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(args.ComponentType, name, component, opts...); err != nil {
 		return nil, err
 	}
 	b := builder{
