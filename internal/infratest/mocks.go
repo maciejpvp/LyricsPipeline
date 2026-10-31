@@ -21,9 +21,13 @@ type Mocks struct {
 	ZoneRegion       string
 	PreviewUnknowns  bool
 	ReferenceOutputs resource.PropertyMap
+	BeforeResource   func(pulumi.MockResourceArgs)
 }
 
 func (m *Mocks) NewResource(args pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
+	if m.BeforeResource != nil {
+		m.BeforeResource(args)
+	}
 	m.Lock()
 	defer m.Unlock()
 	if m.Resources == nil {

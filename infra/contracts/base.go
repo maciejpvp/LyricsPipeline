@@ -3,6 +3,7 @@ package contracts
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -45,19 +46,78 @@ func Reference(ctx *pulumi.Context, name, region, account string) (Base, error) 
 	if err != nil {
 		return Base{}, err
 	}
-	valid := pulumix.Apply3Err(ref.GetIntOutput(pulumi.String("contractVersion")), ref.GetStringOutput(pulumi.String("region")), ref.GetStringOutput(pulumi.String("accountId")), func(version int, r, a string) (bool, error) {
-		if version != ContractVersion || r != region || a != account {
-			return false, fmt.Errorf("incompatible base stack: contract=%d region=%q account=%q", version, r, a)
+	if err := validateReference(ctx, ref, name, region, account); err != nil {
+		return Base{}, err
+	}
+	valid := pulumix.Apply3Err(ref.GetFloat64Output(pulumi.String("contractVersion")), ref.GetStringOutput(pulumi.String("region")), ref.GetStringOutput(pulumi.String("accountId")), func(version float64, r, a string) (bool, error) {
+		for _, field := range []struct {
+			key   string
+			value any
+		}{{"contractVersion", version}, {"region", r}, {"accountId", a}} {
+			if err := validateOutput(name, field.key, field.value, region, account); err != nil {
+				return false, err
+			}
 		}
 		return true, nil
 	})
 	get := func(key string) pulumi.StringOutput {
 		return pulumix.Cast[pulumi.StringOutput](pulumix.Apply2Err(valid, ref.GetStringOutput(pulumi.String(key)), func(_ bool, value string) (string, error) {
-			if value == "" {
-				return "", fmt.Errorf("base stack output %s is missing or empty", key)
+			if err := validateOutput(name, key, value, region, account); err != nil {
+				return "", err
 			}
 			return value, nil
 		}))
 	}
 	return Base{BucketName: get("mediaBucket"), BucketARN: get("mediaBucketArn"), QueueURL: get("queueUrl"), QueueARN: get("queueArn"), QueueName: get("queueName"), Objects: ObjectInputs{Input: get("inputPrefix"), Output: get("outputPrefix")}, Ready: []pulumi.Resource{ref}}, nil
+}
+
+func validateReference(ctx *pulumi.Context, ref *pulumi.StackReference, name, region, account string) error {
+	// Await the referenced stack before callers register resources with inputs that
+	// are independent of it (for example, the separation VPC and NAT gateway).
+	for _, key := range []string{"contractVersion", "region", "accountId", "mediaBucket", "mediaBucketArn", "queueUrl", "queueArn", "queueName", "inputPrefix", "outputPrefix"} {
+		details, err := ref.GetOutputDetails(key)
+		if err != nil {
+			return fmt.Errorf("base stack %q output %q: could not read output", name, key)
+		}
+		value := details.Value
+		if details.SecretValue != nil {
+			value = details.SecretValue
+		}
+		// GetOutputDetails represents unresolved preview values as nil. Keep the
+		// original outputs and deferred checks in Reference rather than inventing defaults.
+		if value == nil && ctx.DryRun() {
+			continue
+		}
+		if err := validateOutput(name, key, value, region, account); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Do not include output values in errors: contract metadata may be secret.
+func validateOutput(stack, key string, value any, region, account string) error {
+	problem := ""
+	if value == nil {
+		problem = "required value is missing, null or unknown"
+	} else if key == "contractVersion" {
+		version, ok := value.(float64)
+		if !ok || version != ContractVersion {
+			problem = fmt.Sprintf("expected contract version %d", ContractVersion)
+		}
+	} else {
+		text, ok := value.(string)
+		switch {
+		case !ok || strings.TrimSpace(text) == "":
+			problem = "expected a nonempty string"
+		case key == "region" && text != region:
+			problem = "does not match the AWS provider region"
+		case key == "accountId" && text != account:
+			problem = "does not match the AWS provider account"
+		}
+	}
+	if problem != "" {
+		return fmt.Errorf("base stack %q output %q: %s", stack, key, problem)
+	}
+	return nil
 }
