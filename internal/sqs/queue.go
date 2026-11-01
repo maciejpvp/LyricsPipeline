@@ -4,16 +4,15 @@ package sqs
 import (
 	"time"
 
-	"LyricsPipeline/internal/config"
-
 	awssqs "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/sqs"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
 )
 
 type Args struct {
-	Settings config.Queue
-	Tags     pulumi.StringMap
+	ComponentType string
+	Settings      Settings
+	Tags          pulumi.StringMap
 }
 
 type Queue struct {
@@ -31,7 +30,7 @@ type redrivePolicy struct {
 
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Queue, error) {
 	component := &Queue{}
-	if err := ctx.RegisterComponentResource("lyrics:queue:Queue", name, component, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(args.ComponentType, name, component, opts...); err != nil {
 		return nil, err
 	}
 	parent := pulumi.Parent(component)

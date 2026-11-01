@@ -1,0 +1,2 @@
+# Shared values are inherited from Pulumi.yaml.
+config: {}

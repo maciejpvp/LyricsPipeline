@@ -1,246 +1,256 @@
 # LyricsPipeline
 
-Pulumi infrastructure and a CPU-only S3/SQS vocal extraction worker. See [the worker README](vocal-extractor/README.md) for job inputs, output manifests, container startup, and image publishing.
+S3 audio → Fargate Spot vocal separation → Amazon Transcribe → word timestamps for karaoke.
+Infrastructure uses **three independently deployed Pulumi Go projects**, sharing one Go module.
+You can deploy and test transcription without deploying separation, ECS, a VPC or a NAT gateway.
 
-## Go infrastructure layout
-
-The project keeps one stack per environment. `main.go` delegates to
-[`deployment.Run`](internal/deployment/deployment.go), which loads and validates
-configuration, checks the effective AWS provider region and availability zone,
-and connects components through typed outputs and explicit readiness dependencies.
-
-```mermaid
-flowchart TD
-    Main[main] --> Deployment[deployment.Run]
-    Deployment --> Config[config: parse, defaults, validation]
-    Config --> Location[Check provider region and availability zone]
-    Location --> Network[vpc: VPC and routing]
-    Location --> Storage[s3: media bucket]
-    Location --> Queue[sqs: jobs and DLQ]
-    Location --> Registry[ecr: image repository]
-    Storage --> Ingestion[ingestion: S3 to SQS]
-    Queue --> Ingestion
-    Storage --> Identity[iam: worker permissions]
-    Queue --> Identity
-    Registry --> Task[ecs: task, container and logs]
-    Identity --> Task
-    Network --> Worker[ecs: cluster and service]
-    Identity --> Worker
-    Task --> Worker
-    Worker --> Scaling[autoscaling: policies and alarms]
-    Queue --> Scaling
-```
-
-Shared configuration has one source: [`Pulumi.yaml`](Pulumi.yaml). Pulumi resolves
-project values and explicit stack overrides before starting the Go program. The
-loader reads the effective values into typed structs, converts units and validates
-them. Go contains no `Defaults()` function or fallback application values. Missing
-settings or object fields are errors, including fields where zero is valid.
-
-All workload settings are visible in the project file: VPC layout, object prefixes,
-ECS resources/lifecycle/health checks, SQS polling/retention and scaling limits.
-Provider protocol constants and validation constraints remain in Go. Object prefixes
-flow to IAM, S3 notifications and the worker environment from the same typed layout.
-Provider JSON documents use concrete structs or the IAM policy builder, with typed
-`pulumix` callbacks.
-
-Resource packages use AWS service names: `s3`, `sqs`, `ecr`, `iam`, `vpc`, `ecs`
-and `autoscaling`. `config`, `deployment` and `ingestion` describe configuration
-or cross-service orchestration. The `ecs` package keeps
-[`NewTaskDefinition`](internal/ecs/task_definition.go) and
-[`NewService`](internal/ecs/service.go) in separate files with distinct argument
-structs. SDK imports use explicit aliases such as `awsecs` when names overlap.
-
-The Go name `ecs.TaskDefinition` replaces `Image`, while the historical Pulumi
-token stays `lyrics:image:Image`; `ecs.Service` retains `lyrics:worker:Worker`.
-S3/SQS wiring retains its queue parent. The resource-graph regression test preserves all 44 pre-refactor component/resource
-identities, inputs and original dependencies. Additional tests check IAM scopes,
-container JSON, image selection, shared prefixes and creation readiness.
-See [Infrastructure Rules](INFRASTRUCTURE_RULES.md) for conventions and ownership.
-
-## Stack configuration
-
-Edit shared workload values in [`Pulumi.yaml`](Pulumi.yaml). They apply to a fresh
-stack automatically. [`Pulumi.dev.yaml`](Pulumi.dev.yaml) contains no copies of those
-values: its empty `config` block inherits the project configuration. It is reserved
-for intentional environment differences and the published image reference.
-
-| Setting | Owner |
-| --- | --- |
-| `aws:region`, `name`, `tags` | Shared project values |
-| `vpc` | Availability zone, VPC/subnet CIDRs and internet route |
-| `s3` | Input and output object prefixes |
-| `ecs` | Numeric CPU/MiB, stop timeout, log retention and health check |
-| `sqs` | Visibility, retries, long polling and dead-letter retention |
-| `autoscaling` | Task limits, idle window, backlog and both cooldowns |
-| `image` | Empty project value for bootstrap; published stack digest |
-
-Project objects use a `value:` wrapper and no project prefix; stack objects use
-`LyricsPipeline:<key>:` without the wrapper. This is native
-[Pulumi project-level configuration](https://www.pulumi.com/docs/iac/concepts/config/#project-level-configuration).
-The runtime remains Go; YAML provides values, not resource declarations.
-
-For normal shared-setting changes:
-
-```bash
-pulumi stack select dev
-# Edit the desired value in Pulumi.yaml, e.g. autoscaling.value.maxTasks.
-git diff -- Pulumi.yaml
-pulumi config get autoscaling
-pulumi preview
-```
-
-Pulumi's CLI currently writes stack settings, not shared project settings. An
-explicit stack key replaces the entire project key: objects are not deep-merged.
-For a deliberate service override, provide the complete object in the stack file.
-Missing fields fail validation instead of being filled by hidden Go defaults.
-Keep ordinary shared changes in the project file to avoid unnecessary stack copies.
-
-The image is a separate scalar because it changes per deployment. Publishing it
-must not replace the whole `ecs` object and discard inherited CPU/health settings:
-
-```bash
-pulumi config set image <repository-url>@<digest>
-```
-
-The publishing script performs that update automatically and reads `aws:region`
-from the effective Pulumi configuration. Empty `image` selects ECR `:bootstrap`
-for provisioning; processing requires a real published image.
-
-For a new environment, initialize/select its stack through the normal workflow.
-It inherits the project values; only intentional differences belong in
-`Pulumi.<stack>.yaml`. Keep project/shared stack settings in version control, as
-recommended by [Pulumi](https://www.pulumi.com/docs/iac/concepts/projects/stack-settings-file/).
-Use secret configuration APIs and encrypted stack values for future sensitive data.
-
-### Migrate an existing deployment object
-
-The old flat `deployment` object and `deploymentImage` override are no longer read.
-If either key is still present, the program stops with a migration message instead
-of silently provisioning with defaults. From the project root, migrate the intended
-existing stack:
-
-```bash
-python3 scripts/migrate-pulumi-config.py --stack <stack>
-pulumi config --stack <stack>
-pulumi preview --stack <stack>
-```
-
-The script uses the Pulumi CLI and Python standard library. It converts old CPU/RAM
-strings into numeric units, preserves configured task/queue/scaling limits and tags,
-and moves the effective image to `image` (the old published override takes
-precedence). It reads project values using the Pulumi CLI, builds complete override
-objects only for actual differences, and removes redundant copies from the stack.
-It refuses conflicting settings and leaves unrelated keys, encrypted values and
-secret-provider metadata intact. If a configuration write fails, it restores
-the original local stack file. Legacy keys are removed only after the new objects
-have been saved. Re-running the script after success does nothing. It does not run
-`pulumi up` or create resources. A custom settings path can be passed with
-`--config-file`.
-
-## Scale to zero with Fargate Spot
+| Project / directory | Resources | Dependency |
+| --- | --- | --- |
+| `LyricsPipeline` / `infra/base` | Private encrypted S3 bucket, extraction SQS queue/DLQ, S3 notification and queue permission | None |
+| `LyricsPipeline-Separation` / `infra/separation` | VPC/NAT, ECR, IAM, ECS Fargate Spot, logs, native autoscaling | Base stack |
+| `LyricsPipeline-Transcription` / `infra/transcription` | EventBridge rules, Step Functions Standard, two small Go Lambdas, IAM, error queue, alarms | Base stack |
 
 ```mermaid
 flowchart LR
-    Zero[0 workers] -->|S3 upload sends SQS message| Queue[Visible work]
-    Queue -->|CloudWatch wakes first worker| Work[Fargate Spot: 1 to maxTasks workers]
-    Work -->|At least 5 waiting jobs per ready worker, add 1, cooldown 300s| Work
-    Work --> Manifest[Write vocals.wav and success manifest]
-    Manifest --> Ack[Acknowledge SQS message]
-    Ack -->|Both queue counts zero for 5 consecutive minutes| Zero
-    Work -->|Forced interruption, no acknowledgement| Retry[Visibility timeout expires]
-    Retry --> Queue
+    Input["S3 input/job_id/audio.mp3"] --> Queue["SQS: separation"]
+    Queue --> Worker["Fargate Spot worker"]
+    Worker --> Vocals["S3 output/job_id/vocals.wav"]
+    Vocals --> Events["EventBridge: Object Created"]
+    Events --> Workflow["Step Functions Standard"]
+    Workflow --> Prepare["Lambda: validate source / reuse result"]
+    Prepare --> Transcribe["Amazon Transcribe: en-US"]
+    Transcribe --> Managed["AWS-managed output"]
+    Managed --> Normalize["Lambda: archive JSON and normalize timestamps"]
+    Normalize --> Raw["S3: raw.json"]
+    Normalize --> Transcript["S3: transcript.json"]
 ```
 
-Defaults: `minTasks=0`, `maxTasks=2`, `idleMinutes=5`, `backlogPerWorker=5`, `scaleOutCooldownSeconds=300`, `maxReceiveCount=5`, 2 vCPU and 8 GiB per task. Validation requires `minTasks>=0`, `maxTasks>=1`, `maxTasks>=minTasks`, `maxReceiveCount>=2`, `idleMinutes>=1`, `backlogPerWorker>=1`, and `scaleOutCooldownSeconds>=1`.
+The base owns **one** S3 notification configuration: the existing input-prefix S3 → SQS
+notification plus EventBridge enabled on the same resource. Transcription owns its own
+EventBridge rules; it never edits bucket notifications. Output JSON and extraction manifests
+do not match the vocals rule. Transcription starts as soon as `vocals.wav` is written,
+without waiting for the extraction manifest.
 
-Only `FARGATE_SPOT` is associated with the cluster and used by the service (`weight=1`, `base=0`, no `LaunchType`). No On-Demand fallback is configured. AWS requires a forced deployment for a launch-type migration, so the service has `forceNewDeployment` and a stable strategy trigger. Existing resource names remain unchanged; the three redundant `messages-over-*` alarms are removed. Creation dependencies run from capacity-provider association through service and scaling target to policies. Initial desired capacity is `minTasks`; Pulumi ignores subsequent `desiredCount` changes so autoscaling owns it.
+See [worker behavior](vocal-extractor/README.md), [transcription behavior and JSON contract](transcription/README.md),
+and [infrastructure conventions](INFRASTRUCTURE_RULES.md).
 
-The existing visible-message alarm now uses [CloudWatch metric math](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-autoscaling-queue.html) with SQS counts and `DesiredTaskCount`, `RunningTaskCount`, and `PendingTaskCount` from standard Container Insights, enabled on the cluster. All input periods are 60 seconds. Visible, in-flight, desired and pending use `Maximum`; running uses `Minimum` so a transition minute is not mistaken for fully available capacity. One alarm adds **one** task when demand is `>=backlogPerWorker`, with a shared 300-second cooldown for bootstrap and later increases:
+## Configuration and layer interfaces
 
-- At zero reported capacity (all desired/running/pending counts zero or absent), positive visible work and an explicitly reported in-flight zero produce demand equal to the threshold. A single file can wake the first worker without ECS metrics at zero.
-- With `running=desired>0` and `pending=0`, demand is `visible/running`. A worker's active job is excluded: one worker needs 5 waiting jobs, two need 10, three need 15. Raising `maxTasks` needs no new alarms.
-- Reported starting capacity, partial/missing readiness metrics, or deployment overlap suppress expansion. Missing visible data produces no demand; missing in-flight data prevents bootstrap. Normal expansion only needs visible and the three ECS counts.
+Each project's `Pulumi.yaml` is the source of its shared settings. Stack files contain only
+intentional overrides, `baseStack` references and the published worker `image`. Pulumi resolves
+project values and whole-key stack overrides natively; objects are **not deep merged**.
+Go validates the resolved configuration and never supplies application default values.
 
-No Lambda, schedule, custom metric publisher or state database is involved. At the measured four minutes per job, a worker processes about 2.5 jobs per ten minutes; five waiting jobs represent about twenty minutes of queued work per worker. This is a backlog threshold, not a ten-minute completion guarantee or a message-age trigger.
+Each layer has its own `main.go`, `config.go` and `deployment.go`. Its local
+`deploy(ctx)` reads and validates configuration, resolves dependencies, composes resources
+and exports results. The Go module remains at the repository root.
 
-Scale-in sets **exactly `minTasks`**, using five consecutive one-minute periods by default. It requires both visible and in-flight message counts to be zero. Missing data does not count as empty: expression `FILL(visible, 1) + FILL(in_flight, 1)` blocks scale-in when either count is absent, and the alarm also treats missing results as non-breaching. Metrics are approximate; alarm evaluation and ECS shutdown mean this is not an exact wall-clock shutdown deadline. ECS metric gaps at zero are intentionally treated as zero only for bootstrap; CloudWatch cannot distinguish a complete ECS telemetry outage from zero capacity. The in-flight check and shared cooldown reduce premature repeated scale-out, but delayed metrics cannot provide a strict instantaneous capacity guarantee.
+```text
+infra/
+  base/           # S3, queues, bucket notification wiring
+  separation/     # worker container, permissions, network and ECS composition
+  transcription/  # Transcribe workflow, events, permissions and Lambda environment
+  contracts/      # versioned base outputs and explicit StackReference reader
+internal/
+  config/         # strict JSON decoding; no application configuration model
+  lambdabuild/    # Go compilation and deterministic ZIP; no Pulumi or AWS
+  lambda/         # Lambda resource from an existing artifact and explicit AWS inputs
+  iam/            # roles and caller-supplied policies
+  ecs/            # ECS resources from supplied container definitions and networking
+  ...             # service components: vpc, s3, sqs, ecr, autoscaling
+```
 
-Cold-start latency includes SQS/CloudWatch metrics, alarm evaluation, container/image/model startup, and Spot availability. After more than six hours of inactivity, [SQS metrics may resume with up to 15 minutes of delay](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/monitoring-using-cloudwatch.html). No Lambda is involved. If [Spot capacity is unavailable](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-capacity-providers.html), messages wait subject to SQS retention while ECS retries task placement. Scaling to zero does **not** stop NAT gateway or other retained infrastructure charges; networking is unchanged.
+Resource packages receive their own settings, IDs, ARNs and readiness dependencies.
+Separation defines the worker's environment and file permissions; transcription defines
+its workflow, application permissions and `TRANSCRIPTION_ACTION`. Historical component
+tokens and names are declared by the owning layers to preserve existing resource identities.
 
-SIGTERM stops new polling while the active message can finish within `stopTimeout=120`. Late long-poll receipts are returned with visibility zero. Forced termination leaves the message unacknowledged until visibility expires; the worker checks the manifest on retry and skips completed jobs. A matching job is never acknowledged before its success manifest is saved. By default, after five unsuccessful deliveries SQS moves the message to the DLQ. Processing is at least once, with no exactly-once guarantee and no new locking system.
+Both transcription Lambdas are native Go executables on `provided.al2023` / ARM64.
+The transcription Pulumi program builds the shared `bootstrap` and a reproducible ZIP in
+ignored `bin/transcription/` during preview/deployment. It uses the Go toolchain already
+required by Pulumi, with `CGO_ENABLED=0`, and needs no Docker or worker image build.
+`lambdabuild.Build(ctx, Args{ModuleDir, Package, OutputDir, Architecture})` supports Linux
+`arm64` and `amd64`, returning the ZIP path and Go architecture. Callers supply AWS Lambda's
+architecture (`arm64` or `x86_64`) when creating a function. The transcription layer builds
+once and passes the same artifact to both functions; there is no application-level build cache.
+
+The version-1 base outputs are `contractVersion`, `accountId`, `region`, `mediaBucket`,
+`mediaBucketArn`, `inputPrefix`, `outputPrefix`, `queueUrl`, `queueArn`, and `queueName`.
+Consumers use `StackReference`, validate the version/account/region against the AWS provider,
+and pass unresolved outputs through typed inputs so previews can register the whole graph.
+Neither downstream layer references the other. Updating transcription does not update or
+start the extraction service.
+
+Prefix changes require updating consumers after the base; they are not a data migration.
+Keep job IDs immutable. New audio or a new pipeline version requiring regeneration uses a new job ID.
+Do not replace a previous job's `vocals.wav`: the transcription layer pins its source ETag.
+
+## Fresh deployment: base and transcription only
+
+The examples use `maciejpvp` and `dev`; replace the organization/environment for another deployment.
+AWS credentials must belong to the target account. `aws:region` defaults to `eu-central-1`.
+
+```bash
+pulumi -C infra/base stack select dev --create
+pulumi -C infra/base preview --stack dev --diff
+pulumi -C infra/base up --stack dev
+
+pulumi -C infra/transcription stack select dev --create
+pulumi -C infra/transcription config set baseStack maciejpvp/LyricsPipeline/dev --stack dev
+pulumi -C infra/transcription preview --stack dev --diff
+pulumi -C infra/transcription up --stack dev
+```
+
+This provisions storage, queues and serverless ASR resources. It provisions no ECS, VPC or NAT.
+Transcribe, Step Functions, S3, Lambda, logs and EventBridge usage can incur charges.
+The extraction input queue is provisioned in the base but does not run any workers by itself.
+
+Upload a WAV vocal stem to `s3://<mediaBucket>/output/<new-job-id>/vocals.wav`.
+Read `mediaBucket` from `pulumi -C infra/base stack output mediaBucket --stack dev`. EventBridge delivery
+is asynchronous; after enabling S3 EventBridge, allow several minutes for activation.
+Existing objects do not generate retroactive events.
+
+To process an **already uploaded** stem without uploading again:
+
+```bash
+python3 -m pip install -r scripts/requirements.txt
+python3 scripts/run-transcription.py \
+  --stack maciejpvp/LyricsPipeline-Transcription/dev \
+  --s3-key output/asr-test-001/vocals.wav
+```
+
+The command prints the execution ARN and result URI. Inspect the execution in Step Functions;
+no deployment or separation is performed. Repeating it reuses the completed result or the same
+Transcribe job. After fixing the cause of a failed Transcribe job, pass `--attempt retry-1` to
+create a new provider job. Successful results remain immutable; use a new job ID to compare runs.
+
+Future transcription changes require only:
+
+```bash
+pulumi -C infra/transcription preview --stack dev --diff
+pulumi -C infra/transcription up --stack dev
+```
+
+## Optional separation deployment
+
+Deploy the base first, then select/init the separation stack and set its base reference.
+The default service remains Fargate Spot only, minimum 0 / maximum 2 tasks, 2 vCPU / 8 GiB.
+There is no On-Demand fallback. Native scaling adds one worker per threshold of five waiting
+jobs per ready worker, with a 300-second cooldown; scale-in requires five empty minutes,
+including no in-flight jobs. Missing metrics do not imply an empty queue.
+
+```bash
+pulumi -C infra/separation stack select dev --create
+pulumi -C infra/separation config set baseStack maciejpvp/LyricsPipeline/dev --stack dev
+pulumi -C infra/separation preview --stack dev --diff
+pulumi -C infra/separation up --stack dev
+./scripts/publish-vocal-extractor-image.sh dev
+pulumi -C infra/separation preview --stack dev --diff
+pulumi -C infra/separation up --stack dev
+```
+
+For a fresh environment without a published image, keep `image` empty until publishing.
+An empty image selects the provisioning-only ECR `:bootstrap` reference; the real image is
+required before processing input jobs. The checked-in development override retains the
+previously configured digest. The publisher targets the separation project and explicit stack,
+uses its configured region, builds only `vocal-extractor`, and saves only the image digest.
+The stack has no Docker build dependency. NAT charges continue while separation is provisioned,
+even with zero ECS tasks.
+
+## Existing layered deployment: source directory refactor
+
+The base project has moved to `infra/base`; all three Pulumi project names are unchanged.
+Use `pulumi -C infra/base ...` for the existing base stack. Moving the source directory
+requires no state move. Each layer retains its component tokens, logical names, parents,
+inputs, dependencies and outputs. Preview all three projects before applying changes;
+this refactor should propose no resource replacement or deletion against populated states.
+
+## Existing monolithic deployment: migrate ownership first
+
+**Do not run the new base program against a populated monolithic state before moving its
+separation resources.** Otherwise its preview will propose deleting resources now owned by
+separation. Do not create replacement infrastructure to compensate for missing state.
+
+At planning time, `maciejpvp/LyricsPipeline/dev` reported zero resources. That does not prove
+that no AWS resources exist: confirm the backend, account and owning stack first. If resources
+exist outside the selected state, recover their owner or explicitly import them before proceeding.
+The migration helper refuses an empty/incomplete source graph and a populated destination.
+
+For a populated source stack:
+
+1. Stop concurrent updates. Confirm the intended source and AWS account. Save a Git/config backup.
+2. Initialize an empty separation stack with `pulumi -C infra/separation stack init dev`.
+3. Inspect the planned state move:
+
+   ```bash
+   python3 scripts/split-pulumi-stacks.py \
+     --source maciejpvp/LyricsPipeline/dev \
+     --dest maciejpvp/LyricsPipeline-Separation/dev
+   ```
+
+4. Run the same command with `--apply` after reviewing the six component roots. The helper backs
+   up both exported states and local stack configurations to a private temporary directory,
+   preserves native separation overrides/image, and uses `pulumi state move` for the components
+   and their children. It does not call `pulumi up`. Bucket, queue, policy and notification stay
+   in the original base. Logical names, tokens, parents and physical IDs are preserved.
+5. Preview the base: existing resources must have no deletes/replacements; the intended change
+   is enabling EventBridge and publishing the base contract. Apply that reviewed base update
+   so the separation reference has real outputs. Then preview separation: it must show no
+   resource creation/deletion/replacement or ECS task-definition change. Review provider JSON
+   canonicalization separately from effective behavior. Apply to persist the new outputs.
+6. Deploy transcription independently as above. Keep migration backups until both states and
+   physical IDs are verified. If a step fails, inspect both states; do not blindly restore just
+   one side after a successful move.
+
+The historical `migrate-pulumi-config.py` handles the pre-native `deployment` format and must
+be used on the pre-split project revision before this state split. The split helper explicitly
+rejects that old format; neither runtime silently interprets legacy configuration.
 
 ## Verification
 
-From the repository root:
-
 ```bash
-gofmt -w main.go internal *_test.go
 go test ./...
 go vet ./...
+go test -race ./infra/... ./internal/... ./transcription/...
 python3 -m unittest discover -s scripts/tests -v
-python -m pytest -q vocal-extractor/tests
-pulumi preview
+python3 -m pytest -q vocal-extractor/tests
 ```
 
-The Go suite uses Pulumi mocks to verify configuration, resource inputs, dependency order, desired-count ownership, Spot strategy, Container Insights, the two alarms, shared cooldown, retry count and stop timeout. Synthetic metric samples evaluate the emitted expressions for bootstrap, backlog boundaries, multiple workers, starting capacity, partial/missing inputs, deployment overlap and idle windows. Python tests send SIGTERM during polling and active processing, check manifest-before-ack ordering, simulate forced interruption and redelivery, and skip a job completed before a lost acknowledgement. Mock/simulated tests do not prove AWS placement, metric/alarm timing, cooldown enforcement or actual SQS redrive behavior.
+The original 44-resource fixture remains unchanged as historical evidence. Each layer
+also has a `testdata/resource_graph.json` captured before this refactor: 10 base, 35 separation
+and 29 transcription registrations (including components and consumer references). Layer-local
+tests compare exact identities, parents, inputs, dependency sets, `ignoreChanges` and exports.
+IAM JSON ordering and checkout-dependent artifact paths are normalized. Shared test helpers
+know only the provider/graph format; application fixtures stay with their layers.
 
-After a separately authorized deployment, verify in the target AWS environment:
+Tests cover ownership, stack contracts, unknown preview outputs, strict configuration,
+event filters, IAM, workflow SDK parameters/retries and native Spot scaling decisions.
+The generic builder is tested with two unrelated programs on ARM64 and AMD64, reproducible
+archives, executable ZIP entries, changed sources and build failures. Go runtime tests cover
+word normalization, immutable sources and recovery after failure. Python tests cover the
+extraction worker and helper scripts.
 
-1. Confirm the service has desired/running count zero and uses only `FARGATE_SPOT`. Upload a unique input audio object and record its SQS message and alarm transition.
-2. Observe desired capacity rise from zero to one, Spot task placement, successful `output/{job_id}/vocals.wav` and `output/{job_id}/manifest.json` uploads with no instrumental upload, then message acknowledgement. Record visible/in-flight and desired/running/pending throughout; desired should remain one for this single file, including pending and active processing. Distinguish metric wake-up delay, container startup, and lack of Spot capacity.
-3. Observe both visible and in-flight metrics report zero for five consecutive minute periods and the empty alarm set desired count to zero. Check in-flight work and missing metrics do not trigger shutdown.
-4. In a separate run, interrupt a long-running test task before its manifest is written. If testing forced termination, ensure the task cannot finish within its 120-second grace period. Confirm no acknowledgement, visibility expiry, a later delivery, and eventual success. Redeliver an already completed job and confirm `job_duplicate` with no reprocessing. Separately verify a persistently failing test message reaches the DLQ after five deliveries.
-5. With one ready worker, compare four versus five waiting messages. Observe one additional task only at the threshold and no further increase during startup/cooldown. In a separate stack with `maxTasks>=3`, compare nine versus ten waiting messages with two ready workers. Record actual alarm samples and scaling activities; use sufficiently long jobs so the queue remains above the threshold while metrics are published.
+Cloud acceptance still requires uploading a real stem with separation absent, inspecting raw
+and normalized results, replaying an event, testing a failed job/retry, and checking the error
+queue/alarms. Listen to several English songs, including rapid vocals and sustained notes;
+compare word timestamps and the vocal stem's timeline against the original track. Valid JSON
+and successful API calls do not prove karaoke alignment quality. No audio is trimmed by ASR.
 
-Validation (2026-10-30): Go formatting, `go test ./...`, `go vet ./...`, and all 15 Python tests passed. The exact emitted scale-out expression was also evaluated through AWS CloudWatch `GetMetricData`, using constant input series and absent metrics: all nine scenarios passed (bootstrap, both sides of the one/two-worker boundaries, pending, missing pending/all metrics, and in-flight work before ECS metrics). This was read-only and published no metrics.
+### Refactor validation on 2026-10-31
 
-[`pulumi preview --stack dev --non-interactive --diff`](https://app.pulumi.com/maciejpvp/LyricsPipeline/dev/previews/99e80867-f447-4e62-9616-cbd1e04c47c7) passed: three in-place updates (Container Insights, scale-out cooldown, and visible-message alarm), 42 resources unchanged, no creates/deletes/replacements. No `pulumi up` was run. Real upload, alarm/cooldown timing and post-deployment checks remain unverified until deployment.
-
-### Go refactor verification (2026-10-30)
-
-The pre-refactor graph is recorded in `testdata/resource_graph.json`, including
-component type/name/parent, provider inputs, dependencies and ignored properties.
-The regression test compares the complete graph with the current program. IAM
-policy comparisons account for equivalent singleton/array forms and statement
-ordering; other resource inputs must match exactly. Mock provider calls are
-recognized explicitly and unsupported invokes fail. The simulated preview also
-registers every identity with unresolved provider outputs and leaves container
-and redrive JSON unknown until the inputs resolve.
-
-The real-stack preview for this refactor could not run with the available Pulumi
-account: `pulumi stack ls --json` returned `[]`, and
-`pulumi preview --stack maciejpvp/LyricsPipeline/dev --non-interactive --diff`
-reported `no stack named 'maciejpvp/LyricsPipeline/dev' found`. The earlier successful
-preview above predates this refactor. Re-run preview with access to the intended
-existing stack before deployment. Local mocks do not prove provider JSON
-canonicalization, AWS authorization or an in-place cloud update. No deployment
-was performed as part of this refactor.
-
-### Native configuration verification (2026-10-31)
-
-Configuration tests load `Pulumi.dev.yaml` through Pulumi's own stack-settings
-reader and exercise the real Go configuration API. The unchanged resource-graph
-fixture still checks all 44 identities and effective inputs. Script tests cover
-migration conflicts, failure recovery, image publishing and a single region/image
-source. A separate isolated local-backend CLI check verified native YAML objects,
-custom settings, legacy image precedence, preservation of an unrelated encrypted
-key and an unchanged second migration run. These local checks create no AWS resources.
-
-The real existing-stack preview was attempted again and reported
-`no stack named 'maciejpvp/LyricsPipeline/dev' found` with the available account.
-Cloud preview and migration of that stack remain unverified; no `pulumi up` ran.
-
-### Central configuration verification (2026-10-31)
-
-`Defaults()` has been removed. Tests read the actual project configuration rather
-than maintain a second set of application defaults. They check inheritance,
-required fields (including omitted zero-valued fields), deliberate central edits,
-unit conversions and preservation of the existing resource graph. The development
-stack is validated without requiring its values to equal any hardcoded defaults.
-
-An isolated real-CLI check confirmed that an empty stack inherits the project,
-changing a shared value affects the effective configuration, and publishing a
-scalar `image` leaves the complete ECS configuration inherited. The legacy migration
-also preserved custom values and encrypted unrelated data while producing complete
-object overrides. No AWS resources were created or changed by these checks.
+- All 74 mock registrations match the pre-refactor layer snapshots: identities,
+  parents, inputs, dependency sets, ignored properties and stack exports.
+  The original root 44-resource fixture is unchanged.
+- `go test ./...`, `go vet ./...`, race tests for all infrastructure/shared packages
+  and the Go runtime, 14 helper-script tests, 30 extraction tests and `git diff --check`
+  passed. Builder tests cover two entry programs, ARM64/AMD64, reproducibility and
+  source edits without stale artifacts.
+- The [base preview from its new directory](https://app.pulumi.com/maciejpvp/LyricsPipeline/dev/previews/055f937e-b91c-4b69-848f-83e968f03458)
+  passed against the accessible empty `dev` state: 11 creates, no ECS/VPC/NAT resources.
+- Provider-backed CLI previews passed for all three projects in an isolated **local
+  backend with synthetic base outputs**: base 11, transcription 29, separation 35 creates.
+  This verifies program/provider execution and packaging, not a migration of populated
+  cloud state or access to real media objects.
+- Direct previews of separation/transcription `dev` reported `no stack named 'dev' found`.
+  Their Cloud stacks have not been initialized. No `pulumi up`, cloud state move,
+  real-audio transcription or listening assessment was performed.

@@ -1,0 +1,43 @@
+name: LyricsPipeline-Separation
+description: Independent Fargate Spot vocal separation
+runtime: go
+config:
+  aws:region: eu-central-1
+  name: vocal-extractor
+  image:
+    type: string
+    default: ''
+  tags:
+    value:
+      Purpose: vocal-extractor
+  vpc:
+    value:
+      availabilityZone: eu-central-1a
+      cidr: 10.42.0.0/16
+      publicSubnetCIDR: 10.42.1.0/24
+      privateSubnetCIDR: 10.42.2.0/24
+      internetCIDR: 0.0.0.0/0
+  ecs:
+    value:
+      cpuUnits: 2048
+      memoryMiB: 8192
+      stopTimeoutSeconds: 120
+      logRetentionDays: 30
+      healthCheck:
+        command:
+        - CMD-SHELL
+        - python healthcheck.py
+        intervalSeconds: 60
+        timeoutSeconds: 5
+        retries: 3
+        startPeriodSeconds: 120
+  autoscaling:
+    value:
+      minTasks: 0
+      maxTasks: 2
+      idleMinutes: 5
+      backlogPerWorker: 5
+      scaleOutCooldownSeconds: 300
+      scaleInCooldownSeconds: 120
+  baseStack:
+    type: string

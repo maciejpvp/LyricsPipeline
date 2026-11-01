@@ -1,3 +1,0 @@
-# Inherits shared settings from Pulumi.yaml.
-# The image publisher writes only LyricsPipeline:image for this stack.
-config: {'LyricsPipeline:image': '646731024202.dkr.ecr.eu-central-1.amazonaws.com/vocal-extractor-image-15214c4@sha256:3e12397798671bdea19076970710fa8ef2ef516e2949b52ce17322bfb3ab357a'}

@@ -4,8 +4,6 @@ package autoscaling
 import (
 	"time"
 
-	"LyricsPipeline/internal/config"
-
 	awsappautoscaling "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/appautoscaling"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/cloudwatch"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -16,11 +14,12 @@ const serviceNamespace = "ecs"
 const scalableDimension = "ecs:service:DesiredCount"
 
 type Args struct {
-	Settings     config.Scaling
-	ClusterName  pulumi.StringInput
-	ServiceName  pulumi.StringInput
-	ServiceReady pulumi.Resource
-	QueueName    pulumi.StringInput
+	ComponentType string
+	Settings      Settings
+	ClusterName   pulumi.StringInput
+	ServiceName   pulumi.StringInput
+	ServiceReady  pulumi.Resource
+	QueueName     pulumi.StringInput
 }
 
 type Autoscaling struct {
@@ -40,7 +39,7 @@ type builder struct {
 
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Autoscaling, error) {
 	component := &Autoscaling{}
-	if err := ctx.RegisterComponentResource("lyrics:autoscaling:Autoscaling", name, component, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(args.ComponentType, name, component, opts...); err != nil {
 		return nil, err
 	}
 	b := builder{

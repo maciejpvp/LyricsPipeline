@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1800" viewBox="0 0 1680 1800" role="img" aria-labelledby="title description">
+<title id="title">Transcription stack: from vocals.wav to word timestamps</title>
+<desc id="description">Separation writes vocals.wav into the base-owned S3 bucket. Base enables S3 delivery to EventBridge. A transcription-owned rule matches Object Created, the shared bucket and output/*/vocals.wav, then starts Step Functions. Prepare validates the exact key and source ETag, reuses valid results, or identifies an idempotent Transcribe job. The workflow starts Transcribe, polls every 60 seconds, and finalizes the raw result into transcript.json. Raw JSON creation does not trigger finalization. Delivery failures and workflow failure events are routed to an SQS error queue. Bucket and prefix are discovered at deployment using the base StackReference. Paths and settings show repository defaults, not verified deployed state.</desc>
+<defs>
+ <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#485e79"/></marker>
+ <marker id="dataArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#16807b"/></marker>
+ <marker id="errorArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#be4658"/></marker>
+ <style>
+ text {font-family: 'DejaVu Sans',sans-serif;fill:#182b46}
+ .title {font-size:36px;font-weight:700;letter-spacing:-.8px}
+ .subtitle {font-size:19px;fill:#52647b}
+ .eyebrow {font-size:13px;font-weight:700;letter-spacing:1.5px}
+ .heading {font-size:23px;font-weight:700}
+ .body {font-size:18px;fill:#435873}
+ .small {font-size:16px;fill:#52647b}
+ .mono {font-family:'DejaVu Sans Mono',monospace;font-size:16px;fill:#213b60}
+ .edge {fill:none;stroke:#485e79;stroke-width:2.8;stroke-linejoin:round;stroke-linecap:round;marker-end:url(#arrow)}
+ .data {fill:none;stroke:#16807b;stroke-width:2.6;stroke-dasharray:7 6;stroke-linejoin:round;marker-end:url(#dataArrow)}
+ .error {fill:none;stroke:#be4658;stroke-width:2.6;stroke-linejoin:round;marker-end:url(#errorArrow)}
+ </style>
+</defs>
+<rect width="1680" height="1800" fill="#f5f7fb"/>
+
+<text x="48" y="69" class="title">From vocals.wav to karaoke word timestamps</text>
+<text x="48" y="107" class="subtitle">Runtime hand-off, stack ownership and the exact event filter used by this repository.</text>
+<rect x="48" y="139" width="206" height="30" rx="8" fill="#fff0d6" stroke="#fff0d6" stroke-width="1.5"/>
+<text x="60" y="160" class="eyebrow" style="fill:#9b5b05">SEPARATION STACK</text>
+<rect x="420" y="139" width="143" height="30" rx="8" fill="#ddf3ee" stroke="#ddf3ee" stroke-width="1.5"/>
+<text x="432" y="160" class="eyebrow" style="fill:#166e65">BASE STACK</text>
+<rect x="900" y="139" width="236" height="30" rx="8" fill="#eee5fa" stroke="#eee5fa" stroke-width="1.5"/>
+<text x="912" y="160" class="eyebrow" style="fill:#6d45ad">TRANSCRIPTION STACK</text>
+<rect x="48" y="184" width="330" height="174" rx="18" fill="#fffdf8" stroke="#ecd4a9" stroke-width="1.5"/>
+<text x="72" y="222" class="heading">Separation worker</text>
+<text x="72" y="257" class="body">Finishes vocal separation,</text>
+<text x="72" y="285" class="body">then uploads the stem.</text>
+<text x="72" y="325" class="mono">PUT vocals.wav</text>
+<rect x="420" y="184" width="440" height="174" rx="18" fill="#f9fffd" stroke="#abd9ce" stroke-width="1.5"/>
+<text x="444" y="222" class="heading">Shared S3 media bucket</text>
+<text x="444" y="258" class="mono">output/{job_id}/vocals.wav</text>
+<text x="444" y="292" class="small">Bucket notification: Eventbridge = true</text>
+<text x="444" y="325" class="small">A completed write emits an S3 event.</text>
+<rect x="900" y="184" width="732" height="174" rx="18" fill="#fdfbff" stroke="#cbb8e9" stroke-width="1.5"/>
+<text x="928" y="221" class="heading">EventBridge rule: vocals-created</text>
+<text x="928" y="251" class="mono">source: aws.s3  |  detail-type: Object Created</text>
+<text x="928" y="281" class="mono">detail.bucket.name: &lt;base mediaBucket&gt;</text>
+<text x="928" y="311" class="mono">detail.object.key: wildcard output/*/vocals.wav</text>
+<path d="M 378 269 H 420" class="edge"/>
+<path d="M 860 269 H 900" class="edge"/>
+<rect x="48" y="398" width="1120" height="96" rx="14" fill="#f0eefb" stroke="#cfc7eb" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="72" y="425" class="eyebrow" style="fill:#6d45ad">DEPLOY-TIME DISCOVERY</text>
+<text x="72" y="454" class="body">baseStack → StackReference → mediaBucket + outputPrefix</text>
+<text x="72" y="479" class="small">The consumer validates account / region. It never references the separation stack.</text>
+<path d="M 1280 358 V 511 H 1022 V 538" class="edge"/>
+<text x="1304" y="444" class="small">StartExecution</text>
+<text x="1304" y="472" class="small">Full S3 event JSON</text>
+<path d="M 1210 563 H 1262" class="edge"/>
+<text x="1277" y="569" class="small">Control flow</text>
+<path d="M 1210 601 H 1262" class="data"/>
+<text x="1277" y="607" class="small">S3 data I/O</text>
+<rect x="48" y="538" width="1120" height="1040" rx="22" fill="#f6f2fc" stroke="#cbb8e9" stroke-width="1.5"/>
+<text x="80" y="580" class="heading">Step Functions Standard</text>
+<text x="80" y="608" class="small">Transcription owns orchestration · execution timeout: 6 hours</text>
+<rect x="80" y="634" width="780" height="128" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="104" y="671" class="heading">1   Prepare Lambda · Go</text>
+<text x="104" y="706" class="body">HEAD vocals.wav; validate bucket, exact path and ETag.</text>
+<text x="104" y="734" class="body">Pin source.json; derive a deterministic job / run ID.</text>
+<rect x="906" y="646" width="224" height="104" rx="18" fill="#e8f6ee" stroke="#acd6bb" stroke-width="1.5"/>
+<text x="930" y="682" class="body">Already complete</text>
+<text x="930" y="712" class="small">Reuse transcript.json</text>
+<path d="M 860 693 H 906" class="edge"/>
+<text x="883" y="626" class="small" text-anchor="middle">cached</text>
+<path d="M 470 762 V 818" class="edge"/>
+<text x="487" y="800" class="small">no cached result</text>
+<rect x="80" y="818" width="780" height="122" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="104" y="855" class="heading">2   Start Amazon Transcribe</text>
+<text x="104" y="890" class="body">AWS SDK: StartTranscriptionJob · en-US · WAV</text>
+<text x="104" y="918" class="body">Transcribe reads the S3 URI using its data-access role.</text>
+<rect x="1208" y="634" width="424" height="132" rx="18" fill="#f9fffd" stroke="#abd9ce" stroke-width="1.5"/>
+<text x="1232" y="671" class="heading">Audio stays in S3</text>
+<text x="1232" y="706" class="small">The event carries bucket, key and ETag.</text>
+<text x="1232" y="733" class="small">The audio bytes are read from S3.</text>
+<rect x="1208" y="818" width="424" height="178" rx="18" fill="#f9fffd" stroke="#abd9ce" stroke-width="1.5"/>
+<text x="1232" y="856" class="heading">AWS-managed result</text>
+<text x="1232" y="893" class="mono">Temporary provider transcript</text>
+<text x="1232" y="921" class="mono">Fresh signed download URL</text>
+<text x="1232" y="954" class="small">No write-check in the media bucket.</text>
+<text x="1232" y="981" class="small">Its creation does not trigger finalization.</text>
+<path d="M 860 878 H 1208" class="data"/>
+<text x="1035" y="858" class="small" text-anchor="middle">job output</text>
+<path d="M 200 940 V 1008" class="edge"/>
+<rect x="80" y="1008" width="240" height="90" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="104" y="1044" class="heading">3   Wait 60 s</text>
+<text x="104" y="1075" class="small">Polling interval</text>
+<rect x="400" y="1008" width="460" height="90" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="424" y="1044" class="heading">4   Get transcription status</text>
+<text x="424" y="1075" class="small">AWS SDK: GetTranscriptionJob</text>
+<path d="M 320 1053 H 400" class="edge"/>
+<path d="M 860 916 H 1102 V 1053 H 860" class="edge"/>
+<text x="1090" y="962" class="small" text-anchor="end">Name conflict?</text>
+<text x="1090" y="985" class="small" text-anchor="end">Attach to existing job.</text>
+<path d="M 630 1098 V 1156" class="edge"/>
+<rect x="400" y="1156" width="460" height="98" rx="18" fill="#fffaf0" stroke="#e3c78e" stroke-width="1.5"/>
+<text x="424" y="1192" class="heading">5   Status?</text>
+<text x="424" y="1223" class="small">COMPLETED / FAILED / still running</text>
+<path d="M 400 1205 H 200 V 1098" class="edge"/>
+<text x="218" y="1131" class="small">QUEUED / IN_PROGRESS</text>
+<path d="M 630 1254 V 1322" class="edge"/>
+<text x="647" y="1298" class="small">COMPLETED</text>
+<rect x="80" y="1322" width="780" height="132" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="104" y="1359" class="heading">6   Finalize Lambda · Go</text>
+<text x="104" y="1394" class="body">Fetch / archive raw.json; verify source; normalize words.</text>
+<text x="104" y="1422" class="body">Attach punctuation and preserve start / end timestamps.</text>
+<path d="M 1418 996 V 1035 H 1188 V 1388 H 860" class="data"/>
+<text x="1210" y="1022" class="small">Download after COMPLETED</text>
+<path d="M 470 1454 V 1494" class="edge"/>
+<rect x="80" y="1494" width="780" height="58" rx="14" fill="#e8f6ee" stroke="#acd6bb" stroke-width="1.5"/>
+<text x="470" y="1530" class="body" text-anchor="middle">SUCCESS · transcript available for karaoke</text>
+<rect x="1208" y="1322" width="424" height="220" rx="18" fill="#e8f6ee" stroke="#acd6bb" stroke-width="1.5"/>
+<text x="1232" y="1360" class="heading">S3 · archived JSON results</text>
+<text x="1232" y="1397" class="mono">output/{job_id}/transcription/</text>
+<text x="1232" y="1425" class="mono">transcript.json + runs/*/raw.json</text>
+<text x="1232" y="1465" class="small">text + words[]</text>
+<text x="1232" y="1490" class="small">Each word: text, start, end, confidence</text>
+<text x="1232" y="1515" class="small">Times are relative to vocals.wav.</text>
+<path d="M 860 1434 H 1208" class="data"/>
+<text x="1035" y="1415" class="small" text-anchor="middle">PutObject</text>
+<rect x="1208" y="1090" width="424" height="174" rx="18" fill="#fff5f5" stroke="#e2b2ba" stroke-width="1.5"/>
+<text x="1232" y="1128" class="heading">SQS error queue + alarms</text>
+<text x="1232" y="1163" class="small">Workflow FAILED / TIMED_OUT / ABORTED</text>
+<text x="1232" y="1190" class="small">→ a separate EventBridge failure rule.</text>
+<text x="1232" y="1217" class="small">Event target delivery failures → DLQ.</text>
+<path d="M 860 1205 H 1208" class="error"/>
+<text x="1035" y="1187" class="small" text-anchor="middle">FAILED → execution fails</text>
+<rect x="48" y="1610" width="1584" height="115" rx="16" fill="#edf2f8" stroke="#d7e0eb" stroke-width="1.5"/>
+<text x="72" y="1641" class="eyebrow">WHY THE OUTPUT DOES NOT TRIGGER ITSELF</text>
+<text x="72" y="1672" class="body">S3 sends supported bucket events to EventBridge. The rule selects only Object Created + the bucket + */vocals.wav.</text>
+<text x="72" y="1701" class="small">raw.json, source.json, transcript.json and separation manifests do not match. Prepare also requires exactly one job_id segment.</text>
+<text x="48" y="1755" class="small">Defaults shown: outputPrefix=output · polling=60 s · up to 5 configured transient retries with exponential backoff.</text>
+<text x="48" y="1781" class="small">Source: infra/base/ingestion.go · infra/transcription/events.go + workflow.go · transcription/handler.go. Repository design, not live deployment state.</text>
+</svg>

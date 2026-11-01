@@ -11,12 +11,8 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 )
 
-func ProjectValues(t *testing.T) map[string]string {
+func ValuesAt(t *testing.T, path string) map[string]string {
 	t.Helper()
-	path, err := workspace.DetectProjectPath()
-	if err != nil {
-		t.Fatal(err)
-	}
 	project, err := workspace.LoadProject(path)
 	if err != nil {
 		t.Fatal(err)
@@ -46,14 +42,10 @@ func ProjectValues(t *testing.T) map[string]string {
 	return values
 }
 
-// StackValues follows Pulumi's whole-key override semantics, not a custom merge.
-func StackValues(t *testing.T, stackName string) map[string]string {
+// StackValuesAt follows Pulumi's whole-key override semantics, not a custom merge.
+func StackValuesAt(t *testing.T, path, stackName string) map[string]string {
 	t.Helper()
-	values := ProjectValues(t)
-	path, err := workspace.DetectProjectPath()
-	if err != nil {
-		t.Fatal(err)
-	}
+	values := ValuesAt(t, path)
 	project, err := workspace.LoadProject(path)
 	if err != nil {
 		t.Fatal(err)

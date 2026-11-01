@@ -1,0 +1,22 @@
+name: LyricsPipeline
+description: Shared S3 storage and ingestion for independent pipeline layers
+runtime: go
+config:
+  aws:region: eu-central-1
+  name: vocal-extractor
+  tags:
+    value:
+      Purpose: vocal-extractor
+  s3:
+    value:
+      inputPrefix: input
+      outputPrefix: output
+  sqs:
+    value:
+      visibilitySeconds: 900
+      maxReceiveCount: 5
+      longPollWaitSeconds: 20
+      deadLetterRetentionDays: 14
+  pulumi:tags:
+    value:
+      pulumi:template: go

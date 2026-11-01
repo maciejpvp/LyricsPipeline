@@ -1,0 +1,169 @@
+{
+  "exports": {
+    "accountId": "123456789012",
+    "contractVersion": 1,
+    "inputPrefix": "input",
+    "mediaBucket": "vocal-extractor-bucket",
+    "mediaBucketArn": "arn:aws:mock::123456789012:vocal-extractor-bucket",
+    "outputPrefix": "output",
+    "queueArn": "arn:aws:mock::123456789012:vocal-extractor-queue",
+    "queueName": "vocal-extractor-queue",
+    "queueUrl": "https://sqs.example/vocal-extractor-queue",
+    "region": "eu-central-1"
+  },
+  "resources": {
+    "aws:s3/bucket:Bucket::vocal-extractor-bucket": {
+      "Type": "aws:s3/bucket:Bucket",
+      "Name": "vocal-extractor-bucket",
+      "Parent": "urn:pulumi:test::LyricsPipeline::custom:storage:Storage::vocal-extractor",
+      "Inputs": {
+        "bucketPrefix": "vocal-extractor-",
+        "forceDestroy": true,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:s3/bucketNotification:BucketNotification::vocal-extractor-notification": {
+      "Type": "aws:s3/bucketNotification:BucketNotification",
+      "Name": "vocal-extractor-notification",
+      "Parent": "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue::vocal-extractor",
+      "Inputs": {
+        "bucket": "vocal-extractor-bucket-id",
+        "eventbridge": true,
+        "queues": [
+          {
+            "events": [
+              "s3:ObjectCreated:*"
+            ],
+            "filterPrefix": "input/",
+            "id": "input-created",
+            "queueArn": "arn:aws:mock::123456789012:vocal-extractor-queue"
+          }
+        ]
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::custom:storage:Storage$aws:s3/bucket:Bucket::vocal-extractor-bucket",
+        "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue$aws:sqs/queue:Queue::vocal-extractor-queue",
+        "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue$aws:sqs/queuePolicy:QueuePolicy::vocal-extractor-queue-policy"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:s3/bucketOwnershipControls:BucketOwnershipControls::vocal-extractor-ownership-controls": {
+      "Type": "aws:s3/bucketOwnershipControls:BucketOwnershipControls",
+      "Name": "vocal-extractor-ownership-controls",
+      "Parent": "urn:pulumi:test::LyricsPipeline::custom:storage:Storage::vocal-extractor",
+      "Inputs": {
+        "bucket": "vocal-extractor-bucket-id",
+        "rule": {
+          "objectOwnership": "BucketOwnerEnforced"
+        }
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::custom:storage:Storage$aws:s3/bucket:Bucket::vocal-extractor-bucket"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock::vocal-extractor-public-access-block": {
+      "Type": "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock",
+      "Name": "vocal-extractor-public-access-block",
+      "Parent": "urn:pulumi:test::LyricsPipeline::custom:storage:Storage::vocal-extractor",
+      "Inputs": {
+        "blockPublicAcls": true,
+        "blockPublicPolicy": true,
+        "bucket": "vocal-extractor-bucket-id",
+        "ignorePublicAcls": true,
+        "restrictPublicBuckets": true
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::custom:storage:Storage$aws:s3/bucket:Bucket::vocal-extractor-bucket"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:s3/bucketServerSideEncryptionConfiguration:BucketServerSideEncryptionConfiguration::vocal-extractor-encryption": {
+      "Type": "aws:s3/bucketServerSideEncryptionConfiguration:BucketServerSideEncryptionConfiguration",
+      "Name": "vocal-extractor-encryption",
+      "Parent": "urn:pulumi:test::LyricsPipeline::custom:storage:Storage::vocal-extractor",
+      "Inputs": {
+        "bucket": "vocal-extractor-bucket-id",
+        "rules": [
+          {
+            "applyServerSideEncryptionByDefault": {
+              "sseAlgorithm": "AES256"
+            }
+          }
+        ]
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::custom:storage:Storage$aws:s3/bucket:Bucket::vocal-extractor-bucket"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:sqs/queue:Queue::vocal-extractor-dlq": {
+      "Type": "aws:sqs/queue:Queue",
+      "Name": "vocal-extractor-dlq",
+      "Parent": "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue::vocal-extractor",
+      "Inputs": {
+        "messageRetentionSeconds": 1209600,
+        "namePrefix": "vocal-extractor-dlq-",
+        "sqsManagedSseEnabled": true,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        }
+      },
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "aws:sqs/queue:Queue::vocal-extractor-queue": {
+      "Type": "aws:sqs/queue:Queue",
+      "Name": "vocal-extractor-queue",
+      "Parent": "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue::vocal-extractor",
+      "Inputs": {
+        "namePrefix": "vocal-extractor-",
+        "receiveWaitTimeSeconds": 20,
+        "redrivePolicy": "{\"deadLetterTargetArn\":\"arn:aws:mock::123456789012:vocal-extractor-dlq\",\"maxReceiveCount\":5}",
+        "sqsManagedSseEnabled": true,
+        "tags": {
+          "Purpose": "vocal-extractor"
+        },
+        "visibilityTimeoutSeconds": 900
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue$aws:sqs/queue:Queue::vocal-extractor-dlq"
+      ],
+      "IgnoreChanges": null
+    },
+    "aws:sqs/queuePolicy:QueuePolicy::vocal-extractor-queue-policy": {
+      "Type": "aws:sqs/queuePolicy:QueuePolicy",
+      "Name": "vocal-extractor-queue-policy",
+      "Parent": "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue::vocal-extractor",
+      "Inputs": {
+        "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sqs:SendMessage\"],\"Resource\":[\"arn:aws:mock::123456789012:vocal-extractor-queue\"],\"Principal\":{\"Service\":[\"s3.amazonaws.com\"]},\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":[\"arn:aws:mock::123456789012:vocal-extractor-bucket\"]}}}]}",
+        "queueUrl": "https://sqs.example/vocal-extractor-queue"
+      },
+      "Dependencies": [
+        "urn:pulumi:test::LyricsPipeline::custom:storage:Storage$aws:s3/bucket:Bucket::vocal-extractor-bucket",
+        "urn:pulumi:test::LyricsPipeline::lyrics:queue:Queue$aws:sqs/queue:Queue::vocal-extractor-queue"
+      ],
+      "IgnoreChanges": null
+    },
+    "custom:storage:Storage::vocal-extractor": {
+      "Type": "custom:storage:Storage",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline::pulumi:pulumi:Stack::LyricsPipeline-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    },
+    "lyrics:queue:Queue::vocal-extractor": {
+      "Type": "lyrics:queue:Queue",
+      "Name": "vocal-extractor",
+      "Parent": "urn:pulumi:test::LyricsPipeline::pulumi:pulumi:Stack::LyricsPipeline-test",
+      "Inputs": {},
+      "Dependencies": null,
+      "IgnoreChanges": null
+    }
+  }
+}
