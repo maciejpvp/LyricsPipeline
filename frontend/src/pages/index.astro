@@ -1,5 +1,6 @@
 ---
 import LyricsPlayer from '../components/LyricsPlayer';
+import { DEFAULT_TRACK } from '../lib/tracks';
 import '../styles/global.css';
 ---
 
@@ -10,7 +11,7 @@ import '../styles/global.css';
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1c1824" />
     <meta name="description" content="Posłuchaj nagrania i śledź każde słowo. Tekst zsynchronizowany z muzyką." />
-    <title>rick · Lyrics</title>
+    <title>{DEFAULT_TRACK.title} · Lyrics</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%2327173e'/%3E%3Cpath d='M20 22v20M28 16v32M36 24v16M44 20v24' stroke='%23c5f780' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E" />
   </head>
   <body>

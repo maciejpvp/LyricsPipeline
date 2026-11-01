@@ -1,20 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import mockTranscript from '../../../mocks/transcript.json';
+import mockTranscript from '../../../mocks/rick/transcript.json';
+import loveMeNotTranscript from '../../../mocks/lovemenot/transcript.json';
 import { focusedLineIndex, formatTime, groupWordsIntoLines, isWordActive, parseTranscript, wordProgress, type TimedWord } from './lyrics';
 
 const word = (text: string, start: number, end = start + 0.4): TimedWord => ({ text, start, end, confidence: null });
 
 describe('groupWordsIntoLines', () => {
-  it('preserves every original mock word, its order and timestamps', () => {
-    const transcript = parseTranscript(mockTranscript);
+  it.each([
+    { track: 'rick', input: mockTranscript, count: 331, start: 0.16, end: 121.1 },
+    { track: 'lovemenot', input: loveMeNotTranscript, count: 355, start: 0.82, end: 207.55 },
+  ])('preserves every original $track word, its order and timestamps', ({ input, count, start, end }) => {
+    const transcript = parseTranscript(input);
     const lines = groupWordsIntoLines(transcript.words);
     const flattened = lines.flatMap(line => line.words);
-    expect(flattened).toHaveLength(331);
+    expect(flattened).toHaveLength(count);
     expect(flattened).toEqual(transcript.words);
     flattened.forEach((item, index) => expect(item).toBe(transcript.words[index]));
     expect(lines.every(line => line.words.length > 0 && line.words.length <= 8)).toBe(true);
-    expect(lines[0]?.start).toBe(0.16);
-    expect(lines.at(-1)?.end).toBe(121.1);
+    expect(lines[0]?.start).toBe(start);
+    expect(lines.at(-1)?.end).toBe(end);
   });
 
   it('breaks at sentence endings, including punctuation followed by quotes', () => {

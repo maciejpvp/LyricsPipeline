@@ -27,9 +27,27 @@ zmienną `ASTRO_TELEMETRY_DISABLED=1`, np. `ASTRO_TELEMETRY_DISABLED=1 npm run c
 
 ## Dane i synchronizacja
 
-`../mocks` jest katalogiem `publicDir` Astro. Pliki `rick.mp3` i `transcript.json`
-są serwowane bez kopiowania ich do źródeł frontendu. Build umieszcza te zasoby
+`../mocks` jest katalogiem `publicDir` Astro. Każde nagranie ma własny katalog:
+
+```text
+mocks/
+  rick/
+    rick.mp3
+    transcript.json
+  lovemenot/
+    lovemenot.mp3
+    transcript.json
+```
+
+Pliki są serwowane jako `/rick/rick.mp3`, `/rick/transcript.json`,
+`/lovemenot/lovemenot.mp3` i `/lovemenot/transcript.json` (z uwzględnieniem
+`BASE_URL`). Nie są kopiowane do źródeł frontendu; build umieszcza te katalogi
 w `dist/`. Font Manrope jest dostarczany lokalnie wraz z aplikacją.
+
+Plik `src/lib/tracks.ts` zawiera jedną listę nagrań z identyfikatorem, tytułem
+i ścieżkami do audio oraz transkrypcji. Dodanie kolejnego nagrania wymaga
+odpowiednich plików w `mocks/` i jednego wpisu na tej liście. Pierwszy wpis,
+`rick`, jest domyślnym wyborem po odświeżeniu strony.
 
 Odtwarzacz czyta kontrakt `schema_version: 1`, `text` i `words` z transkrypcji.
 Każde słowo ma `text`, `start`, `end` w sekundach oraz opcjonalne `confidence`.
@@ -52,11 +70,15 @@ zastępowany długością transkrypcji.
 
 Początkowe przesunięcie synchronizacji wynosi 0 s. Dokładność podświetlania zależy
 od timestampów ASR i zgodności początku MP3 z nagraniem użytym do transkrypcji.
-W dostarczonym przykładzie tekst kończy się przy 121,1 s, a audio trwa około
-131,9 s; w końcówce żadne słowo nie jest aktywne.
+W `rick` tekst kończy się przy 121,1 s, a audio trwa około 131,9 s.
+W `lovemenot` tekst kończy się przy 207,55 s, a audio trwa około 218,7 s.
+W końcówce obu nagrań żadne słowo nie jest aktywne.
 
 ## Obsługa
 
+- Wybierz `rick` lub `lovemenot` w nagłówku. Zmiana zatrzymuje audio, zeruje czas
+  i błędy, wznawia śledzenie tekstu oraz wczytuje właściwą transkrypcję. Głośność
+  i wyciszenie zostają zachowane; nowe nagranie startuje dopiero po kliknięciu play.
 - Kliknij play lub aktywuj go klawiszem Enter/Spacja, aby rozpocząć odsłuch.
 - Kliknij wers, aby przejść do jego początku. Stan play/pauza zostaje zachowany.
 - Przewijaj tekst kółkiem, gestem lub klawiaturą, aby zawiesić śledzenie.
@@ -68,12 +90,16 @@ W dostarczonym przykładzie tekst kończy się przy 121,1 s, a audio trwa około
 
 ## Weryfikacja
 
-Testy jednostkowe sprawdzają grupowanie i zachowanie wszystkich 331 słów,
+Testy jednostkowe sprawdzają grupowanie i zachowanie wszystkich 331 słów `rick`
+oraz 355 słów `lovemenot`,
 granice przedziałów, przerwy, przewijanie w obie strony i koniec transkrypcji.
 Testy komponentu w Happy DOM sprawdzają sterowanie audio, podświetlanie,
 śledzenie tekstu, głośność oraz stany ładowania, błędu i pustej transkrypcji.
 Obejmują też metadane dostępne przed zamontowaniem React, późne ustalenie długości,
 nieznany czas, szybkie play/pauza i ponowne odtwarzanie po końcu nagrania.
+Testy zmiany nagrania sprawdzają poprawne pary audio/tekst, zachowanie głośności
+i wyciszenia, reset stanu oraz ignorowanie spóźnionych odpowiedzi i błędów
+poprzedniego nagrania.
 W testach komponentu API audio jest zastąpione atrapą.
 
 Do sprawdzenia w rzeczywistej przeglądarce: odsłuch i zgodność tekstu w kilku

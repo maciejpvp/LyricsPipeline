@@ -8,6 +8,7 @@ __pycache__/
 !.env.example
 vocal-extractor/data/input/
 vocal-extractor/data/output/
+/mocks/
 
 # Pulumi local state and workspaces
 .pulumi/

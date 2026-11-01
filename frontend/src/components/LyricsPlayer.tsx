@@ -1,17 +1,19 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { focusedLineIndex, formatTime, groupWordsIntoLines, isWordActive, parseTranscript, wordProgress, type LyricLine, type Transcript } from '../lib/lyrics';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
+import { DEFAULT_TRACK, MOCK_TRACKS, type MockTrack } from '../lib/tracks';
 import Icon from './Icon';
 
-const MEDIA_BASE = import.meta.env.BASE_URL;
+const MEDIA_BASE = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const SEEK_STEP_SECONDS = 5;
 const FOLLOW_POSITION_RATIO = 0.42;
 const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' ']);
 
-type TranscriptState =
+type TranscriptState = (
   | { status: 'loading' }
   | { status: 'ready'; transcript: Transcript }
-  | { status: 'error'; message: string };
+  | { status: 'error'; message: string }
+) & { trackId: string };
 
 const LyricRow = memo(function LyricRow({ line, currentTime, focused, past, onSeek }: {
   line: LyricLine;
@@ -45,14 +47,17 @@ const LyricRow = memo(function LyricRow({ line, currentTime, focused, past, onSe
 export default function LyricsPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const [transcriptState, setTranscriptState] = useState<TranscriptState>({ status: 'loading' });
+  const [selectedTrack, setSelectedTrack] = useState<MockTrack>(DEFAULT_TRACK);
+  const [transcriptState, setTranscriptState] = useState<TranscriptState>({ status: 'loading', trackId: DEFAULT_TRACK.id });
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [following, setFollowing] = useState(true);
-  const audio = useAudioPlayer(audioRef);
+  const audioSource = `${MEDIA_BASE}${selectedTrack.audioPath}`;
+  const audio = useAudioPlayer(audioRef, audioSource);
   const { currentTime, duration, playing, buffering, ready, volume, muted, error, seek } = audio;
 
-  const lines = useMemo(() => transcriptState.status === 'ready'
-    ? groupWordsIntoLines(transcriptState.transcript.words) : [], [transcriptState]);
+  const transcript = transcriptState.trackId === selectedTrack.id ? transcriptState : null;
+  const lines = useMemo(() => transcript?.status === 'ready'
+    ? groupWordsIntoLines(transcript.transcript.words) : [], [transcript]);
   const focusedIndex = focusedLineIndex(lines, currentTime);
   const hasWords = lines.length > 0;
   const canSeek = duration !== null && !error;
@@ -60,23 +65,35 @@ export default function LyricsPlayer() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setTranscriptState({ status: 'loading' });
-    void fetch(`${MEDIA_BASE}transcript.json`, { signal: controller.signal })
+    setTranscriptState({ status: 'loading', trackId: selectedTrack.id });
+    void fetch(`${MEDIA_BASE}${selectedTrack.transcriptPath}`, { signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error(`Nie udało się pobrać tekstu (HTTP ${response.status}).`);
         return parseTranscript(await response.json());
       })
       .then(transcript => {
-        if (!controller.signal.aborted) setTranscriptState({ status: 'ready', transcript });
+        if (!controller.signal.aborted) setTranscriptState({ status: 'ready', transcript, trackId: selectedTrack.id });
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) setTranscriptState({
           status: 'error',
+          trackId: selectedTrack.id,
           message: cause instanceof Error ? cause.message : 'Nie udało się wczytać tekstu.',
         });
       });
     return () => controller.abort();
-  }, [loadAttempt]);
+  }, [loadAttempt, selectedTrack]);
+
+  useEffect(() => {
+    document.title = `${selectedTrack.title} · Lyrics`;
+  }, [selectedTrack.title]);
+
+  const selectTrack = (track: MockTrack) => {
+    if (track.id === selectedTrack.id) return;
+    setSelectedTrack(track);
+    setFollowing(true);
+    scrollerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+  };
 
   const centerLine = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const scroller = scrollerRef.current;
@@ -116,7 +133,7 @@ export default function LyricsPlayer() {
 
   return (
     <div className="lyrics-app">
-      <audio ref={audioRef} src={`${MEDIA_BASE}rick.mp3`} preload="metadata" />
+      <audio ref={audioRef} src={audioSource} preload="metadata" />
 
       <header className="topbar">
         <a className="brand" href={MEDIA_BASE} aria-label="Lyrics — strona główna">lyrics<span>.</span></a>
@@ -125,8 +142,16 @@ export default function LyricsPlayer() {
 
       <main className="stage">
         <section className="track-heading" aria-labelledby="track-title">
-          <h1 id="track-title">rick</h1>
-          <span className="track-meta">English <span aria-label="Treści niecenzuralne" title="Treści niecenzuralne" className="explicit-badge">E</span></span>
+          <h1 id="track-title">{selectedTrack.title}</h1>
+          <fieldset className="track-selector">
+            <legend className="sr-only">Wybierz nagranie</legend>
+            {MOCK_TRACKS.map(track => (
+              <label key={track.id}>
+                <input type="radio" name="track" value={track.id} checked={selectedTrack.id === track.id} onChange={() => selectTrack(track)} />
+                <span>{track.title}</span>
+              </label>
+            ))}
+          </fieldset>
         </section>
 
         <div className="lyrics-area">
@@ -143,17 +168,17 @@ export default function LyricsPlayer() {
               if (event.target === event.currentTarget) setFollowing(false);
             }}
           >
-            {transcriptState.status === 'loading' && (
+            {(!transcript || transcript.status === 'loading') && (
               <div className="empty-state" role="status"><span className="loading-orbit" /><p>Wczytywanie tekstu nagrania…</p></div>
             )}
-            {transcriptState.status === 'error' && (
+            {transcript?.status === 'error' && (
               <div className="empty-state" role="alert">
                 <h2>Nie udało się wczytać tekstu.</h2>
-                <p>{transcriptState.message}</p>
+                <p>{transcript.message}</p>
                 <button className="pill-button" onClick={() => setLoadAttempt(value => value + 1)}><Icon name="retry" /> Spróbuj ponownie</button>
               </div>
             )}
-            {transcriptState.status === 'ready' && !hasWords && (
+            {transcript?.status === 'ready' && !hasWords && (
               <div className="empty-state"><h2>Tu gra sam dźwięk.</h2><p>To nagranie nie ma jeszcze tekstu. Nadal możesz go posłuchać.</p></div>
             )}
             {hasWords && (
@@ -181,7 +206,7 @@ export default function LyricsPlayer() {
       <footer className="player" aria-label="Odtwarzacz nagrania">
         {error && <div className="audio-error" role="alert"><span>{error}</span><button onClick={audio.retry}><Icon name="retry" /> Ponów</button></div>}
         <div className="player-inner">
-          <div className="player-track"><span className="player-track-title">rick</span><span className="playback-status" role="status">{playbackStatus}</span></div>
+          <div className="player-track"><span className="player-track-title">{selectedTrack.title}</span><span className="playback-status" role="status">{playbackStatus}</span></div>
           <div className="transport-buttons">
             <button className="icon-button skip-button" onClick={() => audio.skip(-SEEK_STEP_SECONDS)} disabled={!canSeek} aria-label="Cofnij o 5 sekund" title="Cofnij o 5 sekund"><Icon name="back" /></button>
             <button className="play-button" onClick={() => void audio.togglePlayback()} disabled={!!error} aria-label={playing ? 'Wstrzymaj' : 'Odtwórz'} title={playing ? 'Wstrzymaj' : 'Odtwórz'}><Icon name={playing ? 'pause' : 'play'} /></button>

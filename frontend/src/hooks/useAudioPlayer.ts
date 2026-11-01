@@ -7,7 +7,7 @@ function finiteDuration(audio: HTMLAudioElement): number | null {
 }
 
 /** Read the media element on mount as well as on events: metadata may precede hydration. */
-export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
+export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>, source: string) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -18,6 +18,18 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   const [error, setError] = useState<string | null>(null);
   const playRequest = useRef(0);
   const starting = useRef(false);
+  const previousSource = useRef<string | null>(null);
+
+  const resetPlayback = useCallback(() => {
+    playRequest.current += 1;
+    starting.current = false;
+    setError(null);
+    setBuffering(false);
+    setCurrentTime(0);
+    setDuration(null);
+    setPlaying(false);
+    setReady(false);
+  }, []);
 
   const syncMedia = useCallback(() => {
     const audio = audioRef.current;
@@ -33,7 +45,16 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.volume = DEFAULT_VOLUME;
+    const sourceChanged = previousSource.current !== null && previousSource.current !== source;
+    if (previousSource.current === null) audio.volume = DEFAULT_VOLUME;
+    previousSource.current = source;
+
+    if (sourceChanged) {
+      resetPlayback();
+      audio.pause();
+      // Keep this element's volume/mute while clearing the previous recording.
+      audio.load();
+    }
 
     const update = () => syncMedia();
     const waiting = () => { setBuffering(true); syncMedia(); };
@@ -42,7 +63,7 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
       starting.current = false;
       playRequest.current += 1;
       setBuffering(false);
-      setError('Nie udało się wczytać rick.mp3. Sprawdź plik nagrania i spróbuj ponownie.');
+      setError('Nie udało się wczytać nagrania. Sprawdź plik audio i spróbuj ponownie.');
       syncMedia();
       setPlaying(false);
     };
@@ -54,8 +75,10 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     audio.addEventListener('error', failed);
 
     // A cached file can already have its metadata by the time this effect runs.
-    syncMedia();
-    if (audio.error) failed();
+    if (!sourceChanged) {
+      syncMedia();
+      if (audio.error) failed();
+    }
 
     return () => {
       playRequest.current += 1;
@@ -64,7 +87,7 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
       audio.removeEventListener('waiting', waiting);
       audio.removeEventListener('error', failed);
     };
-  }, [audioRef, syncMedia]);
+  }, [audioRef, source, syncMedia, resetPlayback]);
 
   useEffect(() => {
     if (!playing) return;
@@ -119,16 +142,9 @@ export function useAudioPlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   }, [audioRef, seek, syncMedia]);
 
   const retry = useCallback(() => {
-    playRequest.current += 1;
-    starting.current = false;
-    setError(null);
-    setBuffering(false);
-    setCurrentTime(0);
-    setDuration(null);
-    setPlaying(false);
-    setReady(false);
+    resetPlayback();
     audioRef.current?.load();
-  }, [audioRef]);
+  }, [audioRef, resetPlayback]);
 
   const setVolume = useCallback((value: number) => {
     const audio = audioRef.current;

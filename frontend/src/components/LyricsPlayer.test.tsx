@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import mockTranscript from '../../../mocks/transcript.json';
+import mockTranscript from '../../../mocks/rick/transcript.json';
+import loveMeNotTranscript from '../../../mocks/lovemenot/transcript.json';
 import LyricsPlayer from './LyricsPlayer';
 
 const fetchMock = vi.fn();
@@ -10,7 +11,9 @@ const pauseMock = vi.fn();
 const loadMock = vi.fn();
 
 beforeEach(() => {
-  fetchMock.mockResolvedValue(new Response(JSON.stringify(mockTranscript)));
+  fetchMock.mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(
+    url.includes('/lovemenot/') ? loveMeNotTranscript : mockTranscript,
+  ))));
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('matchMedia', () => ({ matches: true }));
   vi.spyOn(HTMLElement.prototype, 'scrollTo').mockImplementation(() => {});
@@ -18,6 +21,12 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(pauseMock);
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(loadMock);
   playMock.mockResolvedValue(undefined);
+  loadMock.mockImplementation(function (this: HTMLMediaElement) {
+    this.currentTime = 0;
+    Object.defineProperty(this, 'duration', { configurable: true, value: NaN });
+    Object.defineProperty(this, 'paused', { configurable: true, value: true });
+    Object.defineProperty(this, 'readyState', { configurable: true, value: 0 });
+  });
 });
 
 afterEach(() => {
@@ -74,8 +83,8 @@ describe('player interactions', () => {
 
   it('loads local media and takes duration and word progress from the audio element', async () => {
     const { audio, container } = await renderPlayer();
-    expect(audio.getAttribute('src')).toBe('/rick.mp3');
-    expect(fetchMock).toHaveBeenCalledWith('/transcript.json', expect.anything());
+    expect(audio.getAttribute('src')).toBe('/rick/rick.mp3');
+    expect(fetchMock).toHaveBeenCalledWith('/rick/transcript.json', expect.anything());
     expect(audio.autoplay).toBe(false);
     expect(screen.getByRole('slider', { name: 'Pozycja odtwarzania' }).getAttribute('max')).toBe('131.889');
 
@@ -183,7 +192,7 @@ describe('player interactions', () => {
   it('shows an audio error and retries loading', async () => {
     const { audio } = await renderPlayer();
     fireEvent.error(audio);
-    expect(screen.getByRole('alert').textContent).toContain('Nie udało się wczytać rick.mp3');
+    expect(screen.getByRole('alert').textContent).toContain('Nie udało się wczytać nagrania');
     fireEvent.click(screen.getByRole('button', { name: 'Ponów' }));
     expect(loadMock).toHaveBeenCalledOnce();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -207,5 +216,99 @@ describe('player interactions', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Spróbuj ponownie' })));
     expect(await screen.findByRole('button', { name: /^Przejdź do 0:00:/ })).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('track selection', () => {
+  it('defaults to rick and loads the matching media and transcript for each choice', async () => {
+    const { audio } = await renderPlayer();
+    expect((screen.getByRole('radio', { name: 'rick' }) as HTMLInputElement).checked).toBe(true);
+    expect(document.title).toBe('rick · Lyrics');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'lovemenot' }));
+    await screen.findByRole('button', { name: /How did I get here\?/ });
+    expect(audio.getAttribute('src')).toBe('/lovemenot/lovemenot.mp3');
+    expect(fetchMock).toHaveBeenLastCalledWith('/lovemenot/transcript.json', expect.anything());
+    expect(screen.getByRole('heading', { name: 'lovemenot' })).toBeDefined();
+    expect(document.title).toBe('lovemenot · Lyrics');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'rick' }));
+    await screen.findByRole('button', { name: /Guess who just discovered/ });
+    expect(audio.getAttribute('src')).toBe('/rick/rick.mp3');
+    expect(fetchMock).toHaveBeenLastCalledWith('/rick/transcript.json', expect.anything());
+    expect(document.title).toBe('rick · Lyrics');
+    expect(playMock).not.toHaveBeenCalled();
+  });
+
+  it('resets playback, buffering and following while preserving volume and mute', async () => {
+    const { audio } = await renderPlayer();
+    fireEvent.change(screen.getByRole('slider', { name: 'Głośność' }), { target: { value: '0.31' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Wycisz' }));
+    audio.currentTime = 42;
+    Object.defineProperty(audio, 'paused', { configurable: true, value: false });
+    fireEvent.play(audio);
+    fireEvent.waiting(audio);
+    fireEvent.wheel(screen.getByRole('region', { name: /^Tekst nagrania/ }), { deltaY: 200 });
+    expect(screen.getByRole('button', { name: 'Wróć do tekstu' })).toBeDefined();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'lovemenot' }));
+    expect(pauseMock).toHaveBeenCalledOnce();
+    expect(loadMock).toHaveBeenCalledOnce();
+    expect(audio.paused).toBe(true);
+    expect(audio.currentTime).toBe(0);
+    expect(audio.volume).toBe(0.31);
+    expect(audio.muted).toBe(true);
+    expect(screen.getByRole('button', { name: 'Odtwórz' })).toBeDefined();
+    expect((screen.getByRole('slider', { name: 'Pozycja odtwarzania' }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText('—:—')).toBeDefined();
+    expect(screen.queryByText('Buforowanie…')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Wróć do tekstu' })).toBeNull();
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'instant' });
+    expect(screen.queryByRole('button', { name: /Guess who just discovered/ })).toBeNull();
+
+    await screen.findByRole('button', { name: /How did I get here\?/ });
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 218.685 });
+    fireEvent.loadedMetadata(audio);
+    expect(screen.getByRole('slider', { name: 'Pozycja odtwarzania' }).getAttribute('max')).toBe('218.685');
+    expect((screen.getByRole('slider', { name: 'Głośność' }) as HTMLInputElement).value).toBe('0.31');
+    expect(screen.getByRole('button', { name: 'Włącz dźwięk' }).getAttribute('aria-pressed')).toBe('true');
+    expect(playMock).not.toHaveBeenCalled();
+  });
+
+  it('clears an audio error when another recording is selected', async () => {
+    const { audio } = await renderPlayer();
+    fireEvent.error(audio);
+    expect(screen.getByRole('alert')).toBeDefined();
+    fireEvent.click(screen.getByRole('radio', { name: 'lovemenot' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Odtwórz' }) as HTMLButtonElement).disabled).toBe(false);
+    await screen.findByRole('button', { name: /How did I get here\?/ });
+  });
+
+  it('ignores a rejected play request from a previous recording', async () => {
+    await renderPlayer();
+    let rejectPlay!: (reason: unknown) => void;
+    playMock.mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectPlay = reject; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Odtwórz' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'lovemenot' }));
+    await act(async () => rejectPlay(new Error('Old media request failed')));
+    await screen.findByRole('button', { name: /How did I get here\?/ });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Odtwórz' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('aborts obsolete transcript requests and ignores their late responses', async () => {
+    let resolveOldRequest!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOldRequest = resolve; }));
+    render(<LyricsPlayer />);
+    const oldSignal = fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal;
+
+    fireEvent.click(screen.getByRole('radio', { name: 'lovemenot' }));
+    expect(oldSignal.aborted).toBe(true);
+    await screen.findByRole('button', { name: /How did I get here\?/ });
+    await act(async () => resolveOldRequest(new Response(JSON.stringify(mockTranscript))));
+    expect(screen.getByRole('button', { name: /How did I get here\?/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Guess who just discovered/ })).toBeNull();
+    expect(document.title).toBe('lovemenot · Lyrics');
   });
 });
