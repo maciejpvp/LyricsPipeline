@@ -23,3 +23,8 @@ coverage.out
 .idea/
 .vscode/
 .DS_Store
+
+# Lyrics viewer
+frontend/node_modules/
+frontend/.astro/
+frontend/dist/

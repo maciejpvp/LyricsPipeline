@@ -34,6 +34,10 @@ without waiting for the extraction manifest.
 See [worker behavior](vocal-extractor/README.md), [transcription behavior and JSON contract](transcription/README.md),
 and [infrastructure conventions](INFRASTRUCTURE_RULES.md).
 
+The local [Astro + React lyrics viewer](frontend/README.md) plays `mocks/rick.mp3`
+with word-level karaoke highlighting from `mocks/transcript.json`. Run
+`cd frontend && npm ci && npm run dev` to open it locally.
+
 ## Configuration and layer interfaces
 
 Each project's `Pulumi.yaml` is the source of its shared settings. Stack files contain only
