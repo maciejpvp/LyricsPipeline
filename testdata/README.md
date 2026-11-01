@@ -29,3 +29,29 @@ Mock graph equality is local regression evidence, not a cloud preview result.
 
 Do not regenerate the fixture to make a refactor pass. Update it only when an
 intentional infrastructure change has been reviewed and its effects understood.
+
+Intentional changes after the deployment refactor:
+
+- 2026-11-01: the transcription fixture's two IAM role policies now allow
+  `s3:ListBucket` on the shared bucket and `s3:PutObject` on the exact root-level
+  `.write_access_check_file.temp` object used by Transcribe's output write check.
+  Audio reads and raw-result writes retain their existing object scopes. Resource
+  identities and other inputs are unchanged; `TestTranscribeS3Permissions` checks
+  the complete S3 action/resource sets separately.
+- 2026-11-01: at the operator's request, transcription source reads now cover
+  the configured output prefix (`<bucket>/<outputPrefix>/*`) rather than only
+  `vocals.wav`. This applies to Transcribe, the workflow and both Lambda roles.
+  EventBridge filtering and runtime validation still require `vocals.wav`.
+- 2026-11-01: Transcribe and workflow writes now cover
+  `<bucket>/<outputPrefix>/*/transcription/*`, retaining the exact root-level
+  write-check exception. The `transcribe:OutputKey` condition still requires
+  `*/transcription/runs/*/raw.json`. Permission tests cover nested probes and
+  reject writes to source audio, manifests and unrelated paths. The deployed
+  workflow confirmed that Transcribe creates its probe alongside `raw.json`,
+  at `*/transcription/runs/<run_id>/.write_access_check_file.temp`.
+- 2026-11-01: superseding the write-check permissions above, transcription now
+  uses service-managed output. The workflow omits output bucket/key parameters;
+  IAM requires both to be absent. Transcribe and workflow S3 writes are removed.
+  The finalization Lambda can read `lyrics-*` Transcribe job metadata and archives
+  downloaded JSON at the existing raw-result path. These changes are covered by
+  the workflow, IAM and runtime tests; no AWS deployment is implied by this fixture.

@@ -1,6 +1,7 @@
 package transcription
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -106,12 +107,44 @@ func (h Handler) Finalize(ctx context.Context, job Job) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if !found || raw.JobName != job.JobName || raw.Status != "COMPLETED" {
+	var downloaded []byte
+	if !found {
+		if h.Provider == nil {
+			return Result{}, errors.New("transcript provider is required for missing raw output")
+		}
+		data, err := h.Provider.Read(ctx, job.JobName)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return Result{}, fmt.Errorf("invalid provider JSON: %w", err)
+		}
+		downloaded = data
+	}
+	if raw.JobName != job.JobName || raw.Status != "COMPLETED" {
 		return Result{}, errors.New("missing or mismatched Transcribe result")
 	}
 	document, err := Normalize(raw, job, h.Settings.Language)
 	if err != nil {
 		return Result{}, err
+	}
+	if !found {
+		saved, err := h.Store.Create(ctx, job.Bucket, job.RawKey, downloaded)
+		if err != nil {
+			return Result{}, err
+		}
+		if !bytes.Equal(saved, downloaded) {
+			var existing, expected any
+			if err := json.Unmarshal(saved, &existing); err != nil {
+				return Result{}, fmt.Errorf("invalid saved provider JSON: %w", err)
+			}
+			if err := json.Unmarshal(downloaded, &expected); err != nil {
+				return Result{}, err
+			}
+			if !reflect.DeepEqual(existing, expected) {
+				return Result{}, errors.New("a different raw transcript already exists")
+			}
+		}
 	}
 	saved, err := createDocument(ctx, h.Store, job.Bucket, job.TranscriptKey, document)
 	if err != nil {

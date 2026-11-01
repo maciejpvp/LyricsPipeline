@@ -80,10 +80,10 @@
 <text x="1232" y="706" class="small">The event carries bucket, key and ETag.</text>
 <text x="1232" y="733" class="small">The audio bytes are read from S3.</text>
 <rect x="1208" y="818" width="424" height="178" rx="18" fill="#f9fffd" stroke="#abd9ce" stroke-width="1.5"/>
-<text x="1232" y="856" class="heading">S3 · raw Transcribe result</text>
-<text x="1232" y="893" class="mono">output/{job_id}/transcription/</text>
-<text x="1232" y="921" class="mono">runs/{run_id}/raw.json</text>
-<text x="1232" y="954" class="small">Written asynchronously by Transcribe.</text>
+<text x="1232" y="856" class="heading">AWS-managed result</text>
+<text x="1232" y="893" class="mono">Temporary provider transcript</text>
+<text x="1232" y="921" class="mono">Fresh signed download URL</text>
+<text x="1232" y="954" class="small">No write-check in the media bucket.</text>
 <text x="1232" y="981" class="small">Its creation does not trigger finalization.</text>
 <path d="M 860 878 H 1208" class="data"/>
 <text x="1035" y="858" class="small" text-anchor="middle">job output</text>
@@ -108,17 +108,17 @@
 <text x="647" y="1298" class="small">COMPLETED</text>
 <rect x="80" y="1322" width="780" height="132" rx="18" fill="#fff" stroke="#d7e0eb" stroke-width="1.5"/>
 <text x="104" y="1359" class="heading">6   Finalize Lambda · Go</text>
-<text x="104" y="1394" class="body">Read raw.json; recheck the source; normalize words.</text>
+<text x="104" y="1394" class="body">Fetch / archive raw.json; verify source; normalize words.</text>
 <text x="104" y="1422" class="body">Attach punctuation and preserve start / end timestamps.</text>
 <path d="M 1418 996 V 1035 H 1188 V 1388 H 860" class="data"/>
-<text x="1210" y="1022" class="small">GetObject after COMPLETED</text>
+<text x="1210" y="1022" class="small">Download after COMPLETED</text>
 <path d="M 470 1454 V 1494" class="edge"/>
 <rect x="80" y="1494" width="780" height="58" rx="14" fill="#e8f6ee" stroke="#acd6bb" stroke-width="1.5"/>
 <text x="470" y="1530" class="body" text-anchor="middle">SUCCESS · transcript available for karaoke</text>
 <rect x="1208" y="1322" width="424" height="220" rx="18" fill="#e8f6ee" stroke="#acd6bb" stroke-width="1.5"/>
-<text x="1232" y="1360" class="heading">S3 · application transcript</text>
+<text x="1232" y="1360" class="heading">S3 · archived JSON results</text>
 <text x="1232" y="1397" class="mono">output/{job_id}/transcription/</text>
-<text x="1232" y="1425" class="mono">transcript.json</text>
+<text x="1232" y="1425" class="mono">transcript.json + runs/*/raw.json</text>
 <text x="1232" y="1465" class="small">text + words[]</text>
 <text x="1232" y="1490" class="small">Each word: text, start, end, confidence</text>
 <text x="1232" y="1515" class="small">Times are relative to vocals.wav.</text>

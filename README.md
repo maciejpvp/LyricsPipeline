@@ -19,8 +19,9 @@ flowchart LR
     Events --> Workflow["Step Functions Standard"]
     Workflow --> Prepare["Lambda: validate source / reuse result"]
     Prepare --> Transcribe["Amazon Transcribe: en-US"]
-    Transcribe --> Raw["S3: raw.json"]
-    Raw --> Normalize["Lambda: normalize word timestamps"]
+    Transcribe --> Managed["AWS-managed output"]
+    Managed --> Normalize["Lambda: archive JSON and normalize timestamps"]
+    Normalize --> Raw["S3: raw.json"]
     Normalize --> Transcript["S3: transcript.json"]
 ```
 

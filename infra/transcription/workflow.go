@@ -29,8 +29,6 @@ type parameters struct {
 	LanguageCode         string                `json:"LanguageCode,omitempty"`
 	MediaFormat          string                `json:"MediaFormat,omitempty"`
 	Media                *media                `json:"Media,omitempty"`
-	OutputBucketPath     string                `json:"OutputBucketName.$,omitempty"`
-	OutputKeyPath        string                `json:"OutputKey.$,omitempty"`
 	JobExecutionSettings *jobExecutionSettings `json:"JobExecutionSettings,omitempty"`
 }
 type media struct {
@@ -66,7 +64,7 @@ func Definition(s TranscriptionSettings, prepare, finalize, dataRole string) mac
 		"Prepare":             {Type: "Task", Resource: "arn:aws:states:::lambda:invoke", Parameters: &parameters{FunctionName: prepare, PayloadPath: "$"}, OutputPath: "$.Payload", Retry: lambdaRetry, Next: "Cached"},
 		"Cached":              {Type: "Choice", Choices: []choice{{Variable: "$.cached", BooleanEquals: &yes, Next: "AlreadyComplete"}}, Default: "StartTranscription"},
 		"AlreadyComplete":     {Type: "Succeed"},
-		"StartTranscription":  {Type: "Task", Resource: "arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob", Parameters: &parameters{JobNamePath: "$.job_name", LanguageCode: s.Language, MediaFormat: "wav", Media: &media{URIPath: "$.media_uri"}, OutputBucketPath: "$.bucket", OutputKeyPath: "$.raw_key", JobExecutionSettings: &jobExecutionSettings{true, dataRole}}, ResultPath: "$.transcribe", Retry: apiRetry, Catch: []catcher{{[]string{"Transcribe.ConflictException"}, "$.start_error", "GetTranscription"}}, Next: "Wait"},
+		"StartTranscription":  {Type: "Task", Resource: "arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob", Parameters: &parameters{JobNamePath: "$.job_name", LanguageCode: s.Language, MediaFormat: "wav", Media: &media{URIPath: "$.media_uri"}, JobExecutionSettings: &jobExecutionSettings{true, dataRole}}, ResultPath: "$.transcribe", Retry: apiRetry, Catch: []catcher{{[]string{"Transcribe.ConflictException"}, "$.start_error", "GetTranscription"}}, Next: "Wait"},
 		"Wait":                {Type: "Wait", Seconds: s.PollSeconds, Next: "GetTranscription"},
 		"GetTranscription":    {Type: "Task", Resource: "arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob", Parameters: &parameters{JobNamePath: "$.job_name"}, ResultPath: "$.transcribe", Retry: apiRetry, Next: "Status"},
 		"Status":              {Type: "Choice", Choices: []choice{{Variable: "$.transcribe.TranscriptionJob.TranscriptionJobStatus", StringEquals: "COMPLETED", Next: "Finalize"}, {Variable: "$.transcribe.TranscriptionJob.TranscriptionJobStatus", StringEquals: "FAILED", Next: "TranscriptionFailed"}}, Default: "Wait"},

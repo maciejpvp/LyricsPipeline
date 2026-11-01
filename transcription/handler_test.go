@@ -57,7 +57,7 @@ func (s *memoryStore) Create(_ context.Context, bucket, key string, data []byte)
 func prepareTest(t *testing.T) (Handler, *memoryStore, Job) {
 	t.Helper()
 	store := newStore()
-	h := Handler{store, testSettings}
+	h := Handler{Store: store, Settings: testSettings}
 	job, err := h.Prepare(context.Background(), testEvent)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestRunIdentityCompatibility(t *testing.T) {
 				Bucket string `json:"bucket"`
 				Key    string `json:"key"`
 			}{"media", tc.key})
-			h := Handler{newStore(), testSettings}
+			h := Handler{Store: newStore(), Settings: testSettings}
 			job, err := h.Prepare(context.Background(), event)
 			if err != nil {
 				t.Fatal(err)
@@ -140,7 +140,7 @@ func TestRunIdentityCompatibility(t *testing.T) {
 }
 func TestNativeEventKeepsLiteralKey(t *testing.T) {
 	event := json.RawMessage(`{"source":"aws.s3","detail-type":"Object Created","detail":{"bucket":{"name":"media"},"object":{"key":"output/song+%20 name/vocals.wav","etag":"audio-etag"}}}`)
-	h := Handler{newStore(), testSettings}
+	h := Handler{Store: newStore(), Settings: testSettings}
 	job, err := h.Prepare(context.Background(), event)
 	if err != nil || job.JobID != "song+%20 name" {
 		t.Fatalf("native key changed: %+v %v", job, err)
@@ -156,7 +156,7 @@ func TestRejectInvalidInputs(t *testing.T) {
 		`{"bucket":"media","key":"output/song/vocals.wav","attempt":true}`, `{`,
 	} {
 		t.Run(event, func(t *testing.T) {
-			h := Handler{newStore(), testSettings}
+			h := Handler{Store: newStore(), Settings: testSettings}
 			if _, err := h.Prepare(context.Background(), []byte(event)); err == nil {
 				t.Fatal("invalid source accepted")
 			}

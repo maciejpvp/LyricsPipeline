@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/transcribe"
 )
 
 func main() {
@@ -20,6 +21,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := transcription.Handler{Store: transcription.S3Store{Client: s3.NewFromConfig(cfg)}, Settings: settings}
+	handler := transcription.Handler{Store: transcription.S3Store{Client: s3.NewFromConfig(cfg)}, Settings: settings,
+		Provider: transcription.ManagedTranscriptReader{Client: transcribe.NewFromConfig(cfg)}}
 	lambda.Start(handler.Handle)
 }

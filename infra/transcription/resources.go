@@ -67,15 +67,16 @@ func (b builder) policy(suffix string, role *roles.Role, statements ...iam.GetPo
 }
 func (b builder) create() (*sfn.StateMachine, error) {
 	a, s := b.args, b.args.Settings
-	input := pulumi.Sprintf("%s/%s/*/vocals.wav", a.Base.BucketARN, a.Base.Objects.Output)
+	input := pulumi.Sprintf("%s/%s/*", a.Base.BucketARN, a.Base.Objects.Output)
 	output := pulumi.Sprintf("%s/%s/*/transcription/*", a.Base.BucketARN, a.Base.Objects.Output)
-	raw := pulumi.Sprintf("%s/%s/*/transcription/runs/*/raw.json", a.Base.BucketARN, a.Base.Objects.Output)
 	jobs := pulumi.Sprintf("arn:aws:transcribe:%s:%s:transcription-job/lyrics-*", a.Region, a.Account)
 	dataRole, err := b.role("transcribe-role", "transcribe.amazonaws.com", pulumi.Sprintf("arn:aws:transcribe:%s:%s:*", a.Region, a.Account))
 	if err != nil {
 		return nil, err
 	}
-	dataPolicy, err := b.policy("transcribe-policy", dataRole, allow([]string{"s3:GetObject"}, input), allow([]string{"s3:PutObject"}, raw))
+	dataPolicy, err := b.policy("transcribe-policy", dataRole,
+		allow([]string{"s3:ListBucket"}, a.Base.BucketARN),
+		allow([]string{"s3:GetObject"}, input))
 	if err != nil {
 		return nil, err
 	}
@@ -93,15 +94,17 @@ func (b builder) create() (*sfn.StateMachine, error) {
 	}
 	passRole := allow([]string{"iam:PassRole"}, dataRole.ARN)
 	passRole.Conditions = iam.GetPolicyDocumentStatementConditionArray{iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("StringEquals"), Variable: pulumi.String("iam:PassedToService"), Values: pulumi.StringArray{pulumi.String("transcribe.amazonaws.com")}}}
-	// StartTranscriptionJob has no resource-level authorization; constrain its output instead.
+	// Omit output locations so Transcribe uses service-managed storage and never
+	// writes an access-check file into the media bucket. Enforce this in IAM too.
 	startJob := allow([]string{"transcribe:StartTranscriptionJob"}, pulumi.String("*"))
 	startJob.Conditions = iam.GetPolicyDocumentStatementConditionArray{
-		iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("StringEquals"), Variable: pulumi.String("transcribe:OutputBucketName"), Values: pulumi.StringArray{a.Base.BucketName}},
-		iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("StringLike"), Variable: pulumi.String("transcribe:OutputKey"), Values: pulumi.StringArray{pulumi.Sprintf("%s/*/transcription/runs/*/raw.json", a.Base.Objects.Output)}},
+		iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("Null"), Variable: pulumi.String("transcribe:OutputBucketName"), Values: pulumi.StringArray{pulumi.String("true")}},
+		iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("Null"), Variable: pulumi.String("transcribe:OutputKey"), Values: pulumi.StringArray{pulumi.String("true")}},
 	}
 	workflowPolicy, err := b.policy("workflow-policy", workflowRole, allow([]string{"lambda:InvokeFunction"}, prepare.Arn, finalize.Arn), startJob, allow([]string{"transcribe:GetTranscriptionJob"}, jobs), passRole,
 		// StartTranscriptionJob also authorizes access to the requested S3 locations.
-		allow([]string{"s3:GetObject"}, input), allow([]string{"s3:PutObject"}, raw))
+		allow([]string{"s3:ListBucket"}, a.Base.BucketARN),
+		allow([]string{"s3:GetObject"}, input))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +136,12 @@ func (b builder) function(action string, input, output pulumi.StringInput) (*lam
 	}
 	list := allow([]string{"s3:ListBucket"}, a.Base.BucketARN)
 	list.Conditions = iam.GetPolicyDocumentStatementConditionArray{iam.GetPolicyDocumentStatementConditionArgs{Test: pulumi.String("StringLike"), Variable: pulumi.String("s3:prefix"), Values: pulumi.StringArray{pulumi.Sprintf("%s/*/transcription/*", a.Base.Objects.Output)}}}
-	permissions, err := b.policy(action+"-policy", role, list, allow([]string{"s3:GetObject"}, input, output), allow([]string{"s3:PutObject"}, output), allow([]string{"logs:CreateLogStream", "logs:PutLogEvents"}, pulumi.Sprintf("%s:*", logs.Arn)))
+	statements := []iam.GetPolicyDocumentStatementArgs{list, allow([]string{"s3:GetObject"}, input, output), allow([]string{"s3:PutObject"}, output), allow([]string{"logs:CreateLogStream", "logs:PutLogEvents"}, pulumi.Sprintf("%s:*", logs.Arn))}
+	if action == "finalize" {
+		jobs := pulumi.Sprintf("arn:aws:transcribe:%s:%s:transcription-job/lyrics-*", a.Region, a.Account)
+		statements = append(statements, allow([]string{"transcribe:GetTranscriptionJob"}, jobs))
+	}
+	permissions, err := b.policy(action+"-policy", role, statements...)
 	if err != nil {
 		return nil, err
 	}

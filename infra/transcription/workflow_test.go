@@ -57,6 +57,24 @@ func TestWorkflowContracts(t *testing.T) {
 			t.Errorf("missing authorization %s", required)
 		}
 	}
+	var permissions struct {
+		Statements []struct {
+			Actions    json.RawMessage                       `json:"Action"`
+			Conditions map[string]map[string]json.RawMessage `json:"Condition"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(policy), &permissions); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range permissions.Statements {
+		if slices.Contains(policyStrings(t, statement.Actions), "transcribe:StartTranscriptionJob") {
+			for _, key := range []string{"transcribe:OutputBucketName", "transcribe:OutputKey"} {
+				if !slices.Equal(policyStrings(t, statement.Conditions["Null"][key]), []string{"true"}) {
+					t.Fatalf("StartTranscriptionJob must require absent %s", key)
+				}
+			}
+		}
+	}
 	checkWorkflow(t, asr.Resources["lyrics-transcription-workflow"].Inputs["definition"].StringValue())
 }
 func checkWorkflow(t *testing.T, raw string) {
@@ -85,8 +103,13 @@ func checkWorkflow(t *testing.T, raw string) {
 		t.Fatal("wrong workflow timing/entrypoint")
 	}
 	start := definition.States["StartTranscription"]
-	if start.Parameters["LanguageCode"] != "en-US" || start.Parameters["OutputKey.$"] != "$.raw_key" || start.ResultPath != "$.transcribe" {
+	if start.Parameters["LanguageCode"] != "en-US" || start.ResultPath != "$.transcribe" {
 		t.Fatalf("incorrect start arguments: %+v", start)
+	}
+	for _, key := range []string{"OutputBucketName", "OutputBucketName.$", "OutputKey", "OutputKey.$"} {
+		if _, exists := start.Parameters[key]; exists {
+			t.Fatalf("%s would make Transcribe create a write-check object in the media bucket", key)
+		}
 	}
 	if len(start.Catch) != 1 || start.Catch[0].ErrorEquals[0] != "Transcribe.ConflictException" || start.Catch[0].Next != "GetTranscription" {
 		t.Fatal("duplicate does not reuse job")

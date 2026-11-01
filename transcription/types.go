@@ -102,6 +102,12 @@ func (e *TransientError) Unwrap() error { return e.Err }
 type Handler struct {
 	Store    ObjectStore
 	Settings Settings
+	Provider TranscriptReader
+}
+
+// TranscriptReader retrieves a completed provider result without writing to S3.
+type TranscriptReader interface {
+	Read(context.Context, string) ([]byte, error)
 }
 
 func (h Handler) Handle(ctx context.Context, input json.RawMessage) (any, error) {

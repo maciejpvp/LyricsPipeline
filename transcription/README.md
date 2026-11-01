@@ -33,7 +33,11 @@ returns `TransientError` for throttling, service failures, network errors and co
 the execution timeout is six hours. Values live in the transcription project's `Pulumi.yaml`.
 Transcribe queueing is enabled with a dedicated data-access role.
 
-Provider output: `output/{job_id}/transcription/runs/{run_id}/raw.json`.
+Transcribe output stays in an AWS-managed bucket. No `OutputBucketName` or `OutputKey`
+is sent to Transcribe, so it does not create `.write_access_check_file.temp` in the
+media bucket. The finalization Lambda fetches a fresh download URL using
+`GetTranscriptionJob`, downloads the completed JSON, and archives the full provider
+document at `output/{job_id}/transcription/runs/{run_id}/raw.json`.
 Application output: `output/{job_id}/transcription/transcript.json`.
 Only object references/status are passed through Step Functions; raw transcript JSON remains
 in S3, avoiding the workflow payload limit. Lambdas process metadata/text, never download audio.
@@ -44,6 +48,14 @@ normalization never publishes a success artifact. The ETag is an object identity
 not an assertion that it is an MD5 content hash. New audio must use a new job ID. Source replacement
 is rejected when observed; external overwrite/delete races are not prevented by S3 versioning or
 a write-once bucket policy. The application contract requires immutable input objects.
+
+Existing archived raw output remains usable without downloading it again. Each retry
+obtains a fresh provider URL if the raw output has not been archived yet; signed URLs
+are not logged. Downloads use HTTPS S3 endpoints, reject redirects and are capped at
+16 MiB with a 30-second timeout. Transient downloads and expired URLs use the existing
+bounded Lambda retries. Previously created check files are not deleted by this change.
+Before deploying this change, let jobs using the previous custom-bucket output finish:
+their Transcribe write permissions are removed by the new infrastructure definition.
 
 A failed provider job remains failed for the same deterministic name. The manual helper accepts
 `--attempt retry-1` after correcting its cause. A completed transcript is reused regardless of
@@ -88,10 +100,12 @@ history records the flow and Transcribe's failure reason.
 
 The preparation/finalization roles can read vocal objects and transcription artifacts, list
 only transcription prefixes, and write only transcription artifacts. The Transcribe data role
-reads vocals and writes only raw run outputs. The workflow can invoke its two functions,
+reads source objects and cannot write to the media bucket. The workflow can invoke its two functions,
 get `lyrics-*` Transcribe jobs, and pass only its Transcribe role to that service.
-`StartTranscriptionJob` requires IAM resource `*`; its statement restricts the output bucket
-and output-key pattern using Transcribe's supported condition keys.
+`StartTranscriptionJob` requires IAM resource `*`; its statement requires the output bucket
+and output key to be absent, enforcing service-managed output. The workflow has no S3
+write permission. Only the finalization Lambda can call `GetTranscriptionJob` among the
+two Lambdas; its access is limited to `lyrics-*` jobs.
 
 Lambda logs use dedicated groups with configured retention. Completed-event logging contains
 job/run IDs and word count, not the transcript text. The only queue consumer for errors is the

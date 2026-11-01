@@ -92,9 +92,13 @@ func statusCode(err error) int {
 	return 0
 }
 func storageError(err error) error {
+	return operationError("S3", err)
+}
+
+func operationError(service string, err error) error {
 	retry := false
 	switch errorCode(err) {
-	case "SlowDown", "ServiceUnavailable", "InternalError", "RequestTimeout", "RequestTimeoutException", "ConditionalRequestConflict":
+	case "SlowDown", "ServiceUnavailable", "InternalError", "RequestTimeout", "RequestTimeoutException", "ConditionalRequestConflict", "InternalFailureException", "LimitExceededException", "ThrottlingException":
 		retry = true
 	}
 	status := statusCode(err)
@@ -106,7 +110,7 @@ func storageError(err error) error {
 		retry = true
 	}
 	if retry {
-		return &TransientError{Err: fmt.Errorf("temporary S3 failure: %w", err)}
+		return &TransientError{Err: fmt.Errorf("temporary %s failure: %w", service, err)}
 	}
-	return fmt.Errorf("S3 operation failed: %w", err)
+	return fmt.Errorf("%s operation failed: %w", service, err)
 }
