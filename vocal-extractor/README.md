@@ -20,7 +20,13 @@ Cold starts include metric publication and alarm evaluation, image pull and cont
 
 On SIGTERM the worker stops polling and tries to finish the active message. ECS retains `stopTimeout=120`; if the worker is forcibly stopped before finishing, the unacknowledged message becomes available after its current visibility timeout expires (initially 900 seconds, extended by the processing heartbeat). A message returned by an outstanding long poll after SIGTERM is released immediately with visibility zero without starting processing; if that call fails, it becomes visible when the existing timeout expires. Successful matching jobs are acknowledged only after their manifest is stored. A crash after manifest upload but before acknowledgement is handled by the same manifest check on retry.
 
-Scaling workers to zero saves task compute charges, **not NAT charges**. The VPC, subnets, NAT gateway and routing remain provisioned and billable as before. See the [repository deployment and verification instructions](../README.md).
+Workers use one private subnet without public IPs, NAT or internet routing. ECR API/registry,
+SQS and CloudWatch Logs use private-DNS interface endpoints; S3 and ECR layers use an S3 gateway
+endpoint. Workers permit no inbound connections and only HTTPS egress to those endpoints/S3.
+Model files and metadata are bundled in the image; runtime internet downloads are unavailable.
+The four interface endpoints remain billed when workers scale to zero (about $35.04/month in
+Frankfurt for one AZ at 730 hours, plus interface traffic). See the
+[network migration and verification instructions](../README.md#existing-separation-deployment-migrate-to-private-endpoints).
 
 Supported formats are MP3, WAV, FLAC, M4A, OGG, AAC, and WMA.
 
@@ -36,7 +42,7 @@ The compose file expects an AWS-compatible SQS endpoint or a real queue; it does
 
 ## Deployment
 
-`infra/base` owns S3 and the input SQS queue/DLQ. `infra/separation` owns VPC/NAT,
+`infra/base` owns S3 and the input SQS queue/DLQ. `infra/separation` owns the private worker VPC/endpoints,
 IAM, ECR, ECS and native autoscaling, and consumes the base through StackReference.
 See the [repository deployment/migration instructions](../README.md).
 

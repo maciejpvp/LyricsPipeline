@@ -50,6 +50,12 @@ func (m *Mocks) NewResource(args pulumi.MockResourceArgs) (string, resource.Prop
 		}
 		return args.Name, outputs, nil
 	}
+	if args.TypeToken == "aws:ec2/vpcEndpoint:VpcEndpoint" && args.Inputs["vpcEndpointType"].StringValue() == "Gateway" {
+		outputs["prefixListId"] = resource.NewStringProperty("pl-0123456789abcdef0")
+		if m.PreviewUnknowns {
+			outputs["prefixListId"] = resource.MakeComputed(outputs["prefixListId"])
+		}
+	}
 	for key, value := range map[resource.PropertyKey]string{
 		"name": args.Name, "arn": "arn:aws:mock::123456789012:" + args.Name,
 		"bucket": args.Name, "url": "https://sqs.example/" + args.Name,

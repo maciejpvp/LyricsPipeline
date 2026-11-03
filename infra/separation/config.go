@@ -43,9 +43,7 @@ type HealthCheck struct {
 type vpcSettings struct {
 	AvailabilityZone  string `json:"availabilityZone"`
 	CIDR              string `json:"cidr"`
-	PublicSubnetCIDR  string `json:"publicSubnetCIDR"`
 	PrivateSubnetCIDR string `json:"privateSubnetCIDR"`
-	InternetCIDR      string `json:"internetCIDR"`
 }
 type ecsSettings struct {
 	CPUUnits           ecs.CPUUnits        `json:"cpuUnits"`
@@ -119,8 +117,7 @@ func (s vpcSettings) apply(d *deploymentConfig) error {
 		name, value string
 		target      *netip.Prefix
 	}{
-		{"cidr", s.CIDR, &d.Network.VPC}, {"publicSubnetCIDR", s.PublicSubnetCIDR, &d.Network.PublicSubnet},
-		{"privateSubnetCIDR", s.PrivateSubnetCIDR, &d.Network.PrivateSubnet}, {"internetCIDR", s.InternetCIDR, &d.Network.Internet},
+		{"cidr", s.CIDR, &d.Network.VPC}, {"privateSubnetCIDR", s.PrivateSubnetCIDR, &d.Network.PrivateSubnet},
 	} {
 		prefix, err := netip.ParsePrefix(field.value)
 		if err != nil {

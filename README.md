@@ -7,7 +7,7 @@ You can deploy and test transcription without deploying separation, ECS, a VPC o
 | Project / directory | Resources | Dependency |
 | --- | --- | --- |
 | `LyricsPipeline` / `infra/base` | Private encrypted S3 bucket, extraction SQS queue/DLQ, S3 notification and queue permission | None |
-| `LyricsPipeline-Separation` / `infra/separation` | VPC/NAT, ECR, IAM, ECS Fargate Spot, logs, native autoscaling | Base stack |
+| `LyricsPipeline-Separation` / `infra/separation` | Private worker VPC/endpoints, ECR, IAM, ECS Fargate Spot, logs, native autoscaling | Base stack |
 | `LyricsPipeline-Transcription` / `infra/transcription` | EventBridge rules, Step Functions Standard, two small Go Lambdas, IAM, error queue, alarms | Base stack |
 
 ```mermaid
@@ -154,16 +154,64 @@ An empty image selects the provisioning-only ECR `:bootstrap` reference; the rea
 required before processing input jobs. The checked-in development override retains the
 previously configured digest. The publisher targets the separation project and explicit stack,
 uses its configured region, builds only `vocal-extractor`, and saves only the image digest.
-The stack has no Docker build dependency. NAT charges continue while separation is provisioned,
-even with zero ECS tasks.
+The stack has no Docker build dependency.
+
+Workers run in one private subnet in the configured Availability Zone, without public IPs,
+NAT, Elastic IPs or an internet gateway. The private route table has no default internet route.
+VPC DNS resolves ECR API/registry, SQS and CloudWatch Logs through four interface endpoints;
+S3 audio transfers and ECR image layers use the free S3 gateway endpoint. Standard SDK URLs
+continue to work through private DNS. IAM permissions and shared bucket/queue policies stay
+unchanged; default endpoint policies also allow ECR's regional S3 layer bucket.
+
+Workers have no inbound rules and can initiate only TCP 443 to the endpoint security group
+or S3 prefix list. The endpoints accept HTTPS only from the worker security group. Their
+standalone ingress rule avoids a circular dependency; ECS waits for that rule, all endpoints,
+private routing, IAM and capacity providers before starting. Stateful replies need no endpoint
+egress rule. No general internet access is available for runtime package/model downloads.
+Models and metadata are included in the image. The worker runtime and Dockerfile are unchanged
+by this network migration.
+
+The four interface endpoints are shared by workers and remain billed at zero tasks. Frankfurt
+pricing checked on 2026-11-03 is $0.012 per endpoint-hour per AZ: approximately **$35.04/month**
+at 730 hours, plus $0.01/GB through interface endpoints at the first traffic tier. S3 gateway
+traffic has no endpoint processing fee. Compute, storage, requests and monitoring remain
+separate. See [AWS endpoint pricing](https://aws.amazon.com/privatelink/pricing/) and the
+[Frankfurt price catalog](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/eu-central-1/index.json).
+
+## Existing separation deployment: migrate to private endpoints
+
+Against the historical NAT configuration, this intentionally removes eight resources: the NAT
+gateway, its Elastic IP and route, public subnet, public route table/association, internet
+gateway and internet route. The VPC, historical private subnet (`10.42.2.0/24`), private route
+table/association and application resource identities remain. Five endpoints, one endpoint
+security group and one ingress rule are added. Workers use the private subnet with public IP
+assignment disabled; their security group permits only the required endpoint/S3 HTTPS traffic.
+The separation stack exports and base contract are unchanged. If the public-subnet version
+was already deployed, the preview instead creates/restores private subnet/routing resources
+and removes the surviving public resources; inspect the actual owning state before applying.
+
+For any complete `LyricsPipeline-Separation:vpc` stack override, retain `availabilityZone`
+and `cidr`, set `privateSubnetCIDR` to the intended private CIDR, and remove `publicSubnetCIDR`
+and `internetCIDR`. Objects are replaced as a whole; obsolete, incomplete and null fields are
+rejected. The checked-in development stack has no VPC override to migrate.
+
+For a later, separately approved deployment, back up the owning state/configuration and use
+a maintenance window. Pause new uploads, drain visible/in-flight work and wait for all old
+tasks to stop, then suspend dynamic scaling. Do not delete NAT or public routing while workers
+still depend on it. Review the explicit separation-stack preview for only intended network
+changes and no storage, IAM, ECR or ECS identity replacement. Deploy the reviewed change only
+after separate authorization, then restore scaling and resume intake. Verify a fresh task's
+image pull, logging, SQS processing, `vocals.wav`/manifest and return to zero. The configured
+image digest is unchanged by this migration; publishing any local image improvements is a
+separate operator action. Local tests and previews do not prove live endpoint connectivity.
 
 ## Existing layered deployment: source directory refactor
 
 The base project has moved to `infra/base`; all three Pulumi project names are unchanged.
 Use `pulumi -C infra/base ...` for the existing base stack. Moving the source directory
-requires no state move. Each layer retains its component tokens, logical names, parents,
-inputs, dependencies and outputs. Preview all three projects before applying changes;
-this refactor should propose no resource replacement or deletion against populated states.
+requires no state move. The source-directory refactor retained each layer's resource identities,
+inputs, dependencies and outputs. The private-endpoint migration above is a separate, intentional network
+change. Preview all three projects before applying; base and transcription must remain unchanged.
 
 ## Existing monolithic deployment: migrate ownership first
 
@@ -195,9 +243,12 @@ For a populated source stack:
    in the original base. Logical names, tokens, parents and physical IDs are preserved.
 5. Preview the base: existing resources must have no deletes/replacements; the intended change
    is enabling EventBridge and publishing the base contract. Apply that reviewed base update
-   so the separation reference has real outputs. Then preview separation: it must show no
-   resource creation/deletion/replacement or ECS task-definition change. Review provider JSON
-   canonicalization separately from effective behavior. Apply to persist the new outputs.
+   so the separation reference has real outputs. For an ownership-only move, use the pre-network-change
+   revision and require no separation resource creation/deletion/replacement or task-definition change.
+   Then follow the separate private-endpoint procedure above, including updating any complete
+   imported VPC override to the three current network fields. Do not combine a state-ownership
+   recovery with network deletion.
+   Review provider JSON canonicalization separately from effective behavior.
 6. Deploy transcription independently as above. Keep migration backups until both states and
    physical IDs are verified. If a step fails, inspect both states; do not blindly restore just
    one side after a successful move.
@@ -220,6 +271,10 @@ The original 44-resource fixture remains unchanged as historical evidence. Each 
 also has a `testdata/resource_graph.json` captured before this refactor: 10 base, 35 separation
 and 29 transcription registrations (including components and consumer references). Layer-local
 tests compare exact identities, parents, inputs, dependency sets, `ignoreChanges` and exports.
+Separation now registers 34 resources: its test preserves the 35-resource historical fixture
+and explicitly accounts for eight public/NAT removals, seven endpoint additions, disabled
+subnet public-IP mapping, restricted worker egress and connectivity dependencies. No other
+graph differences are allowed.
 IAM JSON ordering and checkout-dependent artifact paths are normalized. Shared test helpers
 know only the provider/graph format; application fixtures stay with their layers.
 
@@ -235,6 +290,27 @@ and normalized results, replaying an event, testing a failed job/retry, and chec
 queue/alarms. Listen to several English songs, including rapid vocals and sustained notes;
 compare word timestamps and the vocal stem's timeline against the original track. Valid JSON
 and successful API calls do not prove karaoke alignment quality. No audio is trimmed by ASR.
+
+### Private endpoint validation on 2026-11-03
+
+- Go tests, vet and the infrastructure/shared-package race suite passed, together with 44
+  Python worker/helper-script tests after removing unrelated runtime optimizations. The
+  separation graph has 34 registrations and permits only the documented networking differences from
+  the unchanged historical fixture. Regional endpoint names, private DNS, restricted groups,
+  connectivity dependencies, strict configuration and unknown S3 prefix-list outputs are tested.
+- Provider-backed previews used the existing Cloud backend and explicit fully qualified `dev`
+  stacks, without refresh. The [base preview](https://app.pulumi.com/maciejpvp/LyricsPipeline/dev/previews/4f661ddb-4b10-43ed-8531-ab5cf6660235)
+  passed with 11 proposed creates from its empty state. The
+  [transcription preview](https://app.pulumi.com/maciejpvp/LyricsPipeline-Transcription/dev/previews/c6a32004-15f3-4c16-b6b0-8c816fd8effe)
+  passed with 29 proposed creates. These creation previews do not establish migration safety
+  or prove that no AWS resources exist outside those selected states; base/transcription source
+  and their historical graph fixtures are unchanged by this networking work.
+- Separation preview reported `no stack named 'maciejpvp/LyricsPipeline-Separation/dev' found`.
+  No remote stack was created, and no synthetic backend was substituted. Its endpoint graph is
+  locally tested but has no provider-backed migration preview or live connectivity proof.
+- The configured image digest and historical fixtures are unchanged. Worker runtime,
+  Dockerfile and audio tests match HEAD; this change contains only the network migration. No `pulumi up`, refresh, cloud state modification, image push, uploads or live jobs
+  were performed. Review the owning stack and follow the drain procedure before any deployment.
 
 ### Refactor validation on 2026-10-31
 

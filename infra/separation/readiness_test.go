@@ -10,7 +10,12 @@ import (
 
 func TestCreationReadiness(t *testing.T) {
 	m := runDeployment(t, nil)
-	for _, edge := range []struct{ child, parent string }{{"nat", "igw"}, {"service", "capacity-providers"}, {"service", "internet-route"}, {"service", "public-association"}, {"service", "private-association"}, {"service", "nat-route"}, {"service", "execution-policy"}, {"service", "task-policy"}} {
+	for _, edge := range []struct{ child, parent string }{
+		{"service", "capacity-providers"}, {"service", "private-association"},
+		{"service", "s3-endpoint"}, {"service", "ecr-api-endpoint"}, {"service", "ecr-dkr-endpoint"},
+		{"service", "sqs-endpoint"}, {"service", "logs-endpoint"}, {"service", "endpoints-ingress"},
+		{"service", "execution-policy"}, {"service", "task-policy"},
+	} {
 		t.Run(edge.child+"_after_"+edge.parent, func(t *testing.T) {
 			for _, d := range m.Resources["vocal-extractor-"+edge.child].RegisterRPC.GetDependencies() {
 				if resource.URN(d).Name() == "vocal-extractor-"+edge.parent {

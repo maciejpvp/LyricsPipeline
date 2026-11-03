@@ -14,9 +14,7 @@ config:
     value:
       availabilityZone: eu-central-1a
       cidr: 10.42.0.0/16
-      publicSubnetCIDR: 10.42.1.0/24
       privateSubnetCIDR: 10.42.2.0/24
-      internetCIDR: 0.0.0.0/0
   ecs:
     value:
       cpuUnits: 2048
