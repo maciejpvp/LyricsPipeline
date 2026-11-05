@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM python:3.11-slim-bookworm@sha256:4b4c524dc3dce996864e030c7bd9c6b0e517597189fee48f48e05b499442444b AS builder
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -22,9 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsampl
     && mkdir -p /data/models /tmp/vocal-extractor /tmp/numba-cache \
     && chown -R appuser:appuser /data /tmp/vocal-extractor /tmp/numba-cache
 WORKDIR /app
-COPY --from=builder /wheels /wheels
 COPY requirements.txt .
-RUN python -m pip install --no-index --find-links /wheels -r requirements.txt && rm -rf /wheels
+RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
+    python -m pip install --no-cache-dir --no-index --find-links /wheels -r requirements.txt
 COPY --chown=appuser:appuser *.py .
 COPY --chown=appuser:appuser data/models /data/models
 

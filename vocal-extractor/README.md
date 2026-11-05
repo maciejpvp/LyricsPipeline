@@ -32,6 +32,9 @@ Supported formats are MP3, WAV, FLAC, M4A, OGG, AAC, and WMA.
 
 ## Local container
 
+Building requires Docker BuildKit. Dependency wheels are mounted read-only from the builder
+stage during installation, so wheel archives and pip cache are not stored in runtime image layers.
+
 Set `MEDIA_BUCKET` and `QUEUE_URL` in `.env`, then run:
 
 ```bash
