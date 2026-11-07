@@ -8,9 +8,7 @@ import (
 
 type Settings struct {
 	VPC           netip.Prefix
-	PublicSubnet  netip.Prefix
 	PrivateSubnet netip.Prefix
-	Internet      netip.Prefix
 }
 
 func (n Settings) Validate() error {
@@ -18,19 +16,14 @@ func (n Settings) Validate() error {
 		name   string
 		prefix netip.Prefix
 	}{
-		{"vpc", n.VPC}, {"publicSubnet", n.PublicSubnet}, {"privateSubnet", n.PrivateSubnet}, {"internet", n.Internet},
+		{"vpc", n.VPC}, {"privateSubnet", n.PrivateSubnet},
 	} {
 		if !field.prefix.IsValid() || !field.prefix.Addr().Is4() || field.prefix != field.prefix.Masked() {
 			return fmt.Errorf("network.%s: expected a canonical IPv4 CIDR", field.name)
 		}
 	}
-	for _, subnet := range []netip.Prefix{n.PublicSubnet, n.PrivateSubnet} {
-		if subnet.Bits() <= n.VPC.Bits() || !n.VPC.Contains(subnet.Addr()) {
-			return errors.New("network: subnets must be contained within the VPC")
-		}
-	}
-	if n.PublicSubnet.Overlaps(n.PrivateSubnet) {
-		return errors.New("network: public and private subnets must not overlap")
+	if n.PrivateSubnet.Bits() <= n.VPC.Bits() || !n.VPC.Contains(n.PrivateSubnet.Addr()) {
+		return errors.New("network: private subnet must be contained within the VPC")
 	}
 	return nil
 }

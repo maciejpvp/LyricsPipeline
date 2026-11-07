@@ -29,7 +29,11 @@ func deploy(ctx *pulumi.Context) error {
 		return err
 	}
 	tags := pulumi.ToStringMap(cfg.Tags)
-	vpcNetwork, err := vpc.New(ctx, cfg.Name, vpc.Args{ComponentType: "lyrics:network:Network", Settings: cfg.Network, AvailabilityZone: cfg.AvailabilityZone, Tags: tags})
+	vpcNetwork, err := vpc.New(ctx, cfg.Name, vpc.Args{
+		ComponentType: "lyrics:network:Network", Settings: cfg.Network,
+		Region: cfg.Region, AvailabilityZone: cfg.AvailabilityZone,
+		InterfaceServices: []string{"ecr.api", "ecr.dkr", "sqs", "logs"}, Tags: tags,
+	})
 	if err != nil {
 		return err
 	}
@@ -45,10 +49,20 @@ func deploy(ctx *pulumi.Context) error {
 	if err != nil {
 		return fmt.Errorf("ecs task definition: %w", err)
 	}
-	servicePrerequisites := append([]pulumi.Resource{}, vpcNetwork.RoutingReady...)
+	servicePrerequisites := append([]pulumi.Resource{}, vpcNetwork.ConnectivityReady...)
 	servicePrerequisites = append(servicePrerequisites, roles.PermissionsReady...)
 	servicePrerequisites = append(servicePrerequisites, base.Ready...)
-	workers, err := createService(ctx, cfg, vpcNetwork.VPCID, vpcNetwork.PrivateSubnetID, taskDefinition.ARN, servicePrerequisites)
+	workers, err := createService(ctx, serviceArgs{
+		Name:                    cfg.Name,
+		DesiredCount:            cfg.Scaling.MinTasks,
+		Tags:                    tags,
+		VPCID:                   vpcNetwork.VPCID,
+		SubnetID:                vpcNetwork.PrivateSubnetID,
+		EndpointSecurityGroupID: vpcNetwork.EndpointSecurityGroupID,
+		S3PrefixListID:          vpcNetwork.S3PrefixListID,
+		TaskDefinitionARN:       taskDefinition.ARN,
+		Prerequisites:           servicePrerequisites,
+	})
 	if err != nil {
 		return fmt.Errorf("ecs service: %w", err)
 	}

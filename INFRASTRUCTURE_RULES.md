@@ -9,7 +9,7 @@ All projects share the root Go module and use the same layout:
 | Directory / project | Owns |
 | --- | --- |
 | `infra/base` / `LyricsPipeline` | S3, separation queue/DLQ, queue permissions and the single bucket notification configuration |
-| `infra/separation` / `LyricsPipeline-Separation` | VPC/NAT, ECR, worker permissions, container definition, ECS and native scaling |
+| `infra/separation` / `LyricsPipeline-Separation` | Private worker VPC/endpoints, ECR, worker permissions, container definition, ECS and native scaling |
 | `infra/transcription` / `LyricsPipeline-Transcription` | Transcribe workflow, EventBridge, Lambda environments/permissions, error queue and monitoring |
 | `infra/contracts` | Versioned base outputs and their StackReference reader |
 
@@ -43,7 +43,7 @@ readiness dependencies. They must not take whole components from another service
 | `lambda` | Create a Lambda from a supplied artifact and AWS parameters |
 | `iam` | Create roles and attach explicitly supplied policies |
 | `ecs` | ECS definitions, clusters, capacity providers and services from explicit inputs |
-| `vpc` | VPC, subnets, gateways and routing |
+| `vpc` | Private VPC, subnets, routing and generic service endpoints |
 | `s3` | Private encrypted object storage |
 | `sqs` | Queue, redrive configuration and DLQ |
 | `ecr` | Image repository |
@@ -86,11 +86,24 @@ Grouped components embed `pulumi.ResourceState`, register before their children,
 `pulumi.Parent` for children and register meaningful outputs. Single-resource constructors
 accept the caller's parent/options without adding another identity layer.
 
-Model readiness that IDs alone do not imply: notification after queue policy, NAT after
-internet gateway, and service after routing associations/routes, IAM attachments and cluster
-capacity providers. Keep the ECS service's `IgnoreChanges(["desiredCount"])`: native
-Application Auto Scaling owns desired count. Preserve Fargate Spot only, with no automatic
-On-Demand fallback.
+Model readiness that IDs alone do not imply: notification after queue policy,
+and service after private routing associations, all service endpoints, endpoint ingress,
+IAM attachments and cluster capacity providers. Keep the ECS service's
+`IgnoreChanges(["desiredCount"])`: native Application Auto Scaling owns desired count.
+Preserve Fargate Spot only, with no automatic On-Demand fallback.
+
+Workers run in one private subnet without public IPs or a default internet route. Do not add
+NAT, Elastic IPs, public subnets or an internet gateway. VPC DNS stays enabled. The layer
+selects four interface services (ECR API, ECR registry, SQS and Logs); the VPC component
+creates them with private DNS plus an S3 gateway endpoint on the private route table.
+The gateway uses its default policy so ECR's layer bucket remains accessible; existing IAM
+policies remain the authorization boundary. Do not change shared bucket/queue policies.
+
+Workers explicitly manage empty ingress and allow TCP 443 only to the endpoint security
+group and S3 prefix list. Endpoint ingress is owned exclusively by a standalone rule from
+the worker group; do not also configure inline ingress on that group. This avoids a resource
+dependency cycle. Endpoint egress is empty because replies are stateful. The shared ECS
+service always disables public IP assignment.
 
 Do not recreate resources as a refactoring strategy. Keep force-cleanup behavior unchanged:
 this application explicitly enables it for S3, ECR and the ECS service. Storage stays private,
@@ -137,6 +150,9 @@ configuration and secret outputs when needed.
   dependency sets, `ignoreChanges` and stack exports afterward.
 - Keep layer fixtures in their own `testdata` directories. The original root 44-resource
   fixture remains historical evidence; do not regenerate fixtures to conceal changes.
+- The private-endpoint migration preserves the historical 35-resource separation fixture and
+  compares against an explicit test-side list of eight network removals and seven additions,
+  restricted worker egress and connectivity dependencies; the resulting graph has 34 registrations.
 - Keep application configuration/composition tests with their layer. Shared `configtest`
   and `infratest` helpers must not contain application defaults or deployment composition.
 - Test the generic builder with multiple entry programs, both architectures, deterministic
@@ -144,7 +160,10 @@ configuration and secret outputs when needed.
 - Run Go tests, vet, appropriate race tests, script tests and previews of all projects.
   Report whether previews used real stack state or an isolated backend with synthetic outputs.
   Mock graph equality alone does not establish cloud behavior or migration safety.
-- No resource deletion/replacement is expected for this source refactor. Review provider
-  canonicalization separately from effective policy/container behavior.
+- The source-directory refactor expected no resource deletion/replacement. The private-endpoint
+  migration intentionally removes public/NAT resources while preserving the historical private
+  subnet/routing and application identities. Follow the README drain procedure before any
+  separately approved deployment; never delete connectivity while workers are still running.
+  Review provider canonicalization separately from effective policy/container behavior.
 - Require review before applying protected deployments. Never run `pulumi up` or mutate
   cloud state as part of this refactor's validation.

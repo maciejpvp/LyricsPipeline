@@ -58,6 +58,10 @@ func TestNativeConfiguration(t *testing.T) {
 		{"unknown field", "autoscaling", `{"maxTask":2}`, "maxTask"},
 		{"empty name", "name", " ", "name"},
 		{"empty zone", "vpc", `{"availabilityZone":""}`, "vpc.availabilityZone"},
+		{"obsolete public subnet", "vpc", `{"publicSubnetCIDR":"10.42.1.0/24"}`, "publicSubnetCIDR"},
+		{"obsolete internet route", "vpc", `{"internetCIDR":"0.0.0.0/0"}`, "internetCIDR"},
+		{"null private subnet", "vpc", `{"privateSubnetCIDR":null}`, "privateSubnetCIDR"},
+		{"malformed private subnet", "vpc", `{"privateSubnetCIDR":"invalid"}`, "privateSubnetCIDR"},
 		{"CPU must be numeric", "ecs", `{"cpuUnits":"2048"}`, "cpuUnits"},
 		{"memory must be numeric", "ecs", `{"memoryMiB":"8192"}`, "memoryMiB"},
 		{"incompatible memory", "ecs", `{"memoryMiB":2048}`, "ecs.cpuUnits/memoryMiB"},
@@ -179,10 +183,10 @@ func TestNetworkValidation(t *testing.T) {
 		change func(*vpc.Settings)
 	}{
 		{"invalid", func(n *vpc.Settings) { n.VPC = netip.Prefix{} }},
-		{"host bits", func(n *vpc.Settings) { n.PublicSubnet = netip.MustParsePrefix("10.42.1.5/24") }},
-		{"outside VPC", func(n *vpc.Settings) { n.PublicSubnet = netip.MustParsePrefix("10.43.1.0/24") }},
-		{"overlap", func(n *vpc.Settings) { n.PrivateSubnet = n.PublicSubnet }},
-		{"IPv6", func(n *vpc.Settings) { n.Internet = netip.MustParsePrefix("::/0") }},
+		{"host bits", func(n *vpc.Settings) { n.PrivateSubnet = netip.MustParsePrefix("10.42.2.5/24") }},
+		{"outside VPC", func(n *vpc.Settings) { n.PrivateSubnet = netip.MustParsePrefix("10.43.2.0/24") }},
+		{"subnet equals VPC", func(n *vpc.Settings) { n.PrivateSubnet = n.VPC }},
+		{"IPv6", func(n *vpc.Settings) { n.PrivateSubnet = netip.MustParsePrefix("::/0") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings, err := loadForTest(t, nativeValues(t))
@@ -216,14 +220,14 @@ func TestNativeSettingsAndUnits(t *testing.T) {
 }
 func TestCentralOperationalSettings(t *testing.T) {
 	values := nativeValues(t)
-	configtest.EditObject(t, values, "LyricsPipeline-Separation:vpc", `{"availabilityZone":"eu-central-1b","cidr":"10.50.0.0/16","publicSubnetCIDR":"10.50.1.0/24","privateSubnetCIDR":"10.50.2.0/24"}`)
+	configtest.EditObject(t, values, "LyricsPipeline-Separation:vpc", `{"availabilityZone":"eu-central-1b","cidr":"10.50.0.0/16","privateSubnetCIDR":"10.50.2.0/24"}`)
 	configtest.EditObject(t, values, "LyricsPipeline-Separation:ecs", `{"stopTimeoutSeconds":60,"logRetentionDays":7,"healthCheck":{"command":["CMD","python"],"intervalSeconds":30,"timeoutSeconds":10,"retries":5,"startPeriodSeconds":0}}`)
 	configtest.EditObject(t, values, "LyricsPipeline-Separation:autoscaling", `{"scaleInCooldownSeconds":60}`)
 	got, err := loadForTest(t, values)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.AvailabilityZone != "eu-central-1b" || got.Network.VPC.String() != "10.50.0.0/16" || got.Network.PublicSubnet.String() != "10.50.1.0/24" {
+	if got.AvailabilityZone != "eu-central-1b" || got.Network.VPC.String() != "10.50.0.0/16" || got.Network.PrivateSubnet.String() != "10.50.2.0/24" {
 		t.Fatalf("network configuration ignored: %+v", got.Network)
 	}
 	if got.Task.StopTimeout != time.Minute || got.Task.LogRetention != 7*24*time.Hour || got.Task.HealthCheck.Interval != 30*time.Second || got.Task.HealthCheck.StartPeriod != 0 || got.Task.HealthCheck.Retries != 5 {
