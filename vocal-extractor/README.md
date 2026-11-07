@@ -2,6 +2,10 @@
 
 CPU-only S3/SQS worker that separates vocals from audio with UVR-MDX-NET through `audio-separator`.
 
+Each worker loads the model lazily on its first separation and reuses it for subsequent
+jobs, updating the output directory for every job. Failed model loads are retried on the
+next attempt. The loaded model remains in memory until the worker exits; jobs run sequentially.
+
 ## Job contract
 
 Upload source audio to either `s3://$MEDIA_BUCKET/input/{filename}` or `s3://$MEDIA_BUCKET/input/{job_id}/{filename}`. For a flat `input/{filename}` key, the worker derives a stable 16-character job ID from the bucket and object key. S3 sends the object-created notification to SQS, and Fargate workers process one message at a time. Each completed job writes only `vocals.wav` and `manifest.json` to `output/{job_id}/`. The audio filename is always `vocals.wav`, regardless of the input filename; the manifest's `output_keys` contains only that audio object's key. The separator saves only the vocal stem, and no instrumental is uploaded. `OUTPUT_PREFIX` can override the default `output/` prefix. Source objects are retained.

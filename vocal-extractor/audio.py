@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from audio_separator.separator import Separator
 
 SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma"}
 
@@ -11,6 +15,7 @@ class AudioProcessor:
         self.model_dir = model_dir
         self.model_filename = model_filename
         self.ffprobe_timeout_seconds = ffprobe_timeout_seconds
+        self._separator: Separator | None = None
 
     def validate_name(self, name: str) -> str:
         normalized = Path(name).name
@@ -30,11 +35,17 @@ class AudioProcessor:
             raise ValueError("invalid_audio")
 
     def separate(self, input_path: Path, output_dir: Path) -> Path:
-        from audio_separator.separator import Separator
+        if self._separator is None:
+            from audio_separator.separator import Separator
 
-        separator = Separator(output_dir=str(output_dir), output_format="WAV",
-                              model_file_dir=str(self.model_dir), output_single_stem="Vocals")
-        separator.load_model(model_filename=self.model_filename)
+            separator = Separator(output_dir=str(output_dir), output_format="WAV",
+                                  model_file_dir=str(self.model_dir), output_single_stem="Vocals")
+            separator.load_model(model_filename=self.model_filename)
+            self._separator = separator
+
+        separator = self._separator
+        separator.output_dir = str(output_dir)
+        separator.model_instance.output_dir = str(output_dir)
         outputs = separator.separate(str(input_path), custom_output_names={"Vocals": "vocals"})
         if len(outputs) != 1:
             raise RuntimeError("separator did not produce exactly one vocal stem")
